@@ -1,0 +1,27 @@
+{
+  "name": "peptidefi",
+  "version": "0.0.0",
+  "private": true,
+  "description": "PeptideFi Season 1 — free-to-play points-based trading on synthetic peptide assets.",
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=9.0.0"
+  },
+  "packageManager": "pnpm@10.33.0",
+  "scripts": {
+    "db:link": "supabase link --project-ref pjsjaspntdjecfitogtc --workdir packages/db",
+    "db:push": "supabase db push --workdir packages/db",
+    "db:diff": "supabase db diff --workdir packages/db",
+    "db:gen-types": "supabase gen types typescript --project-id pjsjaspntdjecfitogtc --schema public > packages/db/types.ts",
+    "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md,yml,yaml}\"",
+    "format:check": "prettier --check \"**/*.{ts,tsx,js,jsx,json,md,yml,yaml}\""
+  },
+  "devDependencies": {
+    "supabase": "^1.226.4",
+    "prettier": "^3.3.3",
+    "typescript": "^5.6.3"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["supabase"]
+  }
+}

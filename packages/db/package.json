@@ -1,0 +1,14 @@
+{
+  "name": "@peptidefi/db",
+  "version": "0.0.0",
+  "private": true,
+  "description": "PeptideFi database — Supabase migrations and generated TypeScript types.",
+  "main": "types.ts",
+  "types": "types.ts",
+  "scripts": {
+    "link": "supabase link --project-ref pjsjaspntdjecfitogtc",
+    "push": "supabase db push",
+    "diff": "supabase db diff",
+    "gen-types": "supabase gen types typescript --project-id pjsjaspntdjecfitogtc --schema public > types.ts"
+  }
+}
