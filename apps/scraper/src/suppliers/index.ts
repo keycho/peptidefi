@@ -1,5 +1,6 @@
 import type { ScrapeResult } from "@peptidefi/shared";
 import type { Browser } from "playwright";
+import { cayman } from "./cayman";
 
 /**
  * Per-supplier scraper module contract.
@@ -33,7 +34,9 @@ export interface SupplierModule {
  * supplier_observations so the rest of the pipeline (run rows, FX fetch,
  * persist path) is exercised end-to-end from day one.
  */
-export const SUPPLIERS: Partial<Record<string, SupplierModule>> = {};
+export const SUPPLIERS: Partial<Record<string, SupplierModule>> = {
+  CAYMAN: cayman,
+};
 
 const stubModule: SupplierModule = {
   needsBrowser: false,
