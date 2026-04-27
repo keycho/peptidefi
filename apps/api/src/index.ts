@@ -1,10 +1,6 @@
 import "dotenv/config";
 import express from "express";
 import cors from "cors";
-import {
-  type HealthState,
-  startHealthServer,
-} from "@peptidefi/shared";
 import { authRequired } from "./auth";
 import { corsOptions } from "./cors-config";
 import { balanceHandler } from "./routes/balance";
@@ -12,14 +8,18 @@ import { balanceHandler } from "./routes/balance";
 /**
  * PeptideFi API — Express server.
  *
- * Two ports:
- *   - API_PORT      (default 3000) — user-facing routes (/balance, future
- *                                    /positions/*, /balance/check-grants)
- *   - HEALTH_PORT   (default 8080) — Railway-only /health JSON snapshot
+ * Single port (API_PORT, default 3000), single Express app. Both the
+ * user-facing routes (/balance, future /positions/*, /balance/check-grants)
+ * and the Railway healthcheck (/health) live here.
  *
- * They're separate so an attacker can't reach the cycle/health metadata
- * via the public API surface, and so Railway's healthcheck has its own
- * port that's never accidentally exposed via CORS.
+ * Why one port (different from scraper/worker which use two): Railway
+ * assigns one public port per service and runs its healthcheck against
+ * the same port. A separate "internal-only" health port can't actually
+ * be reached by Railway's healthcheck, so the second listener was just
+ * dead weight here. The scraper and worker have no public API surface,
+ * so their standalone HEALTH_PORT server (from @peptidefi/shared) makes
+ * sense for them — Railway just routes the healthcheck port to the
+ * standalone server.
  *
  * Auth model: every protected route mounts the authRequired middleware
  * which verifies the Bearer JWT locally with HS256 + SUPABASE_JWT_SECRET
@@ -27,27 +27,32 @@ import { balanceHandler } from "./routes/balance";
  * public.users.id). user_id is NEVER read from the request body or
  * query — only from the verified JWT sub claim.
  *
- * Graceful shutdown: SIGTERM/SIGINT closes both servers, lets in-flight
+ * Port resolution: process.env.PORT first (Railway injects this), then
+ * API_PORT (our own convention), then default 3000.
+ *
+ * Graceful shutdown: SIGTERM/SIGINT closes the server, lets in-flight
  * requests finish naturally, then exits 0. Railway sends SIGTERM during
  * deploys with a typical 30s grace window — Express's server.close()
  * stops accepting new connections immediately and waits for in-flight
  * to drain.
  */
 
-const apiPort = Number.parseInt(process.env.API_PORT ?? "3000", 10);
-const healthPort = Number.parseInt(process.env.HEALTH_PORT ?? "8080", 10);
+const apiPort = Number.parseInt(
+  process.env.PORT ?? process.env.API_PORT ?? "3000",
+  10,
+);
 
-const startedAt = new Date().toISOString();
-const health: HealthState = {
-  service: "api",
-  started_at: startedAt,
-  cycles_completed: 0, // not a cyclic service; fields kept for shape parity
-  cycles_failed: 0,
-  last_cycle_started_at: null,
-  last_cycle_finished_at: null,
-  last_cycle_status: "ready",
-  last_cycle_duration_ms: null,
-};
+interface HealthSnapshot {
+  ok: true;
+  service: "api";
+  started_at: string;
+  uptime_seconds: number;
+  auth: "jose-HS256";
+  cors: { lovable_pattern: true; static_origins: string[]; env_extra_count: number };
+}
+
+const startedAt = new Date();
+const startedAtIso = startedAt.toISOString();
 
 let stopRequested = false;
 function requestShutdown(signal: string): void {
@@ -64,9 +69,37 @@ function buildApp(): express.Express {
   app.use(cors(corsOptions()));
   app.use(express.json({ limit: "16kb" }));
 
-  // Public root — handy for "is the URL right?" checks. Not the healthcheck.
+  // Public root — handy for "is the URL right?" checks.
   app.get("/", (_req, res) => {
     res.json({ service: "peptidefi-api", ok: true });
+  });
+
+  // Healthcheck (public, no auth). Railway hits this on API_PORT during
+  // deploy verification. Returns 200 + JSON snapshot of process state.
+  // Kept on the same Express server as the user routes so Railway's
+  // single-port healthcheck model works without a separate listener.
+  app.get("/health", (_req, res) => {
+    const snapshot: HealthSnapshot = {
+      ok: true,
+      service: "api",
+      started_at: startedAtIso,
+      uptime_seconds: Math.floor((Date.now() - startedAt.getTime()) / 1000),
+      auth: "jose-HS256",
+      cors: {
+        lovable_pattern: true,
+        static_origins: [
+          "http://localhost:3000",
+          "http://localhost:5173",
+          "http://127.0.0.1:3000",
+          "http://127.0.0.1:5173",
+        ],
+        env_extra_count: (process.env.CORS_ORIGINS ?? "")
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean).length,
+      },
+    };
+    res.set("cache-control", "no-store").json(snapshot);
   });
 
   // Protected routes — authRequired applied per route, so unknown paths
@@ -95,21 +128,11 @@ function buildApp(): express.Express {
 async function main(): Promise<void> {
   const app = buildApp();
 
-  // Start the user-facing API server.
-  const apiServer = app.listen(apiPort, "0.0.0.0", () => {
-    console.log(`[startup] api listening on :${apiPort}`);
+  const server = app.listen(apiPort, "0.0.0.0", () => {
+    console.log(
+      `[startup] api listening on :${apiPort}, /health on same port, auth=jose-HS256`,
+    );
   });
-
-  // Start the Railway healthcheck server on a separate port.
-  const healthServer = startHealthServer({
-    port: healthPort,
-    state: () => health,
-    // The API isn't cyclic — it's healthy as long as it's accepting
-    // connections. Use a long staleAfterMs so we never go unhealthy
-    // just because nothing's pinged us recently.
-    staleAfterMs: 24 * 60 * 60 * 1000,
-  });
-  console.log(`[startup] health endpoint on :${healthPort}/health`);
 
   // Wait for shutdown signal.
   await new Promise<void>((resolve) => {
@@ -121,11 +144,8 @@ async function main(): Promise<void> {
   });
 
   // Drain. Express's server.close() stops accepting new connections and
-  // waits for in-flight to finish. healthServer.close() does the same.
-  await Promise.all([
-    new Promise<void>((resolve) => apiServer.close(() => resolve())),
-    new Promise<void>((resolve) => healthServer.close(() => resolve())),
-  ]);
+  // waits for in-flight to finish.
+  await new Promise<void>((resolve) => server.close(() => resolve()));
   console.log("[shutdown] clean exit");
 }
 

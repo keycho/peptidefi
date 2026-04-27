@@ -35,6 +35,8 @@ COPY packages/shared packages/shared
 
 WORKDIR /app/apps/api
 
-# 3000 = API_PORT (user-facing); 8080 = HEALTH_PORT (Railway healthcheck).
-EXPOSE 3000 8080
+# Single port: /health and the user-facing routes both live on API_PORT
+# so Railway's single-port healthcheck model works. PORT env (Railway
+# auto-injects) takes precedence over API_PORT in src/index.ts.
+EXPOSE 3000
 CMD ["pnpm", "start"]
