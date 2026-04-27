@@ -67,6 +67,25 @@ const REQUEST_HEADERS: Record<string, string> = {
 const RATIO_RE = /\b(?:g|mg)\s*\/\s*(?:mol|mole|kg|L|liter|liters)\b/i;
 
 /**
+ * Read the WC-Store-API X-WP-TotalPages header from either the direct
+ * response (`x-wp-totalpages`) or the ScrapingAnt-wrapped response
+ * (`ant-original-header-x-wp-totalpages`). Defaults to 1.
+ */
+function readTotalPagesHeader(res: Response): number {
+  const direct = res.headers.get("x-wp-totalpages");
+  if (direct) {
+    const n = Number.parseInt(direct, 10);
+    if (Number.isFinite(n) && n > 0) return n;
+  }
+  const proxied = res.headers.get("ant-original-header-x-wp-totalpages");
+  if (proxied) {
+    const n = Number.parseInt(proxied, 10);
+    if (Number.isFinite(n) && n > 0) return n;
+  }
+  return 1;
+}
+
+/**
  * ScrapingAnt proxy integration.
  *
  * When SCRAPER_USE_PROXY=true and SCRAPINGANT_API_KEY is set, every
@@ -373,6 +392,14 @@ class WooSupplierModule {
    *
    * Each of these tends to clear within a few seconds. Two retries with
    * 3s / 8s sleeps catch the vast majority while keeping cycle time bounded.
+   *
+   * Proxy compatibility: when the request goes through ScrapingAnt, the
+   * response Content-Type is "text/plain" (their wrapper) but the body is
+   * still the target's JSON. We therefore do NOT gate on Content-Type —
+   * instead we trust JSON.parse + Array.isArray to validate, which catches
+   * both "vendor served HTML challenge" and "proxy returned text" cases
+   * with a single check. Pagination header is dual-sourced because
+   * ScrapingAnt rewrites X-WP-TotalPages → ant-original-header-x-wp-totalpages.
    */
   private async fetchPageWithRetry(
     url: string,
@@ -388,25 +415,26 @@ class WooSupplierModule {
           lastErr = new Error(`HTTP ${res.status} fetching ${url}`);
           continue;
         }
-        const ct = res.headers.get("content-type") ?? "";
-        if (!ct.includes("application/json")) {
+        const totalPages = readTotalPagesHeader(res);
+        const text = await res.text();
+        let body: unknown;
+        try {
+          body = JSON.parse(text);
+        } catch {
+          // Almost certainly a captcha / challenge HTML page — neither a direct
+          // vendor 200-with-HTML nor a proxy passthrough of one.
           lastErr = new Error(
-            `non-JSON content-type "${ct}" fetching ${url} (likely captcha/challenge page)`,
+            `non-JSON body fetching ${url} (first 80 chars: ${text.slice(0, 80).replace(/\s+/g, " ")})`,
           );
           continue;
         }
-        const totalPagesHeader = res.headers.get("x-wp-totalpages");
-        const totalPages = totalPagesHeader
-          ? Number.parseInt(totalPagesHeader, 10)
-          : 1;
-        const body = (await res.json()) as WooProduct[];
         if (!Array.isArray(body)) {
           lastErr = new Error(
-            `unexpected catalog response from ${this.cfg.host} (not an array)`,
+            `unexpected catalog response from ${this.cfg.host} (not an array; got ${typeof body})`,
           );
           continue;
         }
-        return { body, totalPages };
+        return { body: body as WooProduct[], totalPages };
       } catch (err) {
         lastErr = err;
         continue;
