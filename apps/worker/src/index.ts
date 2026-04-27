@@ -69,9 +69,11 @@ async function main(): Promise<void> {
 }
 
 function sleep(ms: number): Promise<void> {
+  // Do NOT unref() the timer — it IS the loop. Without a TTY (Docker /
+  // Railway / background processes) there's nothing else holding the event
+  // loop open, so unref'ing here causes Node to exit between cycles.
   return new Promise((resolve) => {
-    const t = setTimeout(resolve, ms);
-    t.unref?.();
+    setTimeout(resolve, ms);
   });
 }
 
