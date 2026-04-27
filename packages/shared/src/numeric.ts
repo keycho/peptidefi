@@ -78,3 +78,29 @@ export function pctDiff(a: Numeric, b: Numeric): number {
   if (aBn.isZero()) return Number.POSITIVE_INFINITY;
   return aBn.minus(bBn).abs().div(aBn).times(100).toNumber();
 }
+
+/**
+ * Median of a non-empty list of Numeric values. For an even count, returns
+ * the arithmetic mean of the two middle elements (standard median).
+ *
+ * Used by the TWAP worker to compute the cross-supplier canonical price
+ * each cycle. Throws on empty input — callers must short-circuit when
+ * there's nothing to median.
+ *
+ * Returned scale defaults to 6 (matches numeric(20, 6) on
+ * peptide_twaps.twap_usd_per_mg). Callers writing into wider columns can
+ * pass a higher dp.
+ */
+export function median(values: Numeric[], dp = 6): Numeric {
+  if (values.length === 0) {
+    throw new Error("median: empty input");
+  }
+  const sorted = values.map(bn).sort((a, b) => a.comparedTo(b) ?? 0);
+  const mid = Math.floor(sorted.length / 2);
+  if (sorted.length % 2 === 1) {
+    return toNumeric(sorted[mid]!, dp);
+  }
+  const lo = sorted[mid - 1]!;
+  const hi = sorted[mid]!;
+  return toNumeric(lo.plus(hi).div(2), dp);
+}

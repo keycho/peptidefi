@@ -364,42 +364,48 @@ export type Database = {
         Row: {
           computed_at: string
           created_at: string
+          dropped_observation_ids: number[]
           dropped_supplier_twap_ids: number[]
           id: number
+          input_observation_ids: number[]
           input_supplier_twap_ids: number[]
           median_deviation_bps: number | null
           peptide_id: number
           suppliers_dropped: number
           suppliers_used: number
-          twap_usd_per_mg: number
+          twap_usd_per_mg: number | null
           window_end: string
           window_start: string
         }
         Insert: {
           computed_at: string
           created_at?: string
+          dropped_observation_ids?: number[]
           dropped_supplier_twap_ids?: number[]
           id?: number
-          input_supplier_twap_ids: number[]
+          input_observation_ids?: number[]
+          input_supplier_twap_ids?: number[]
           median_deviation_bps?: number | null
           peptide_id: number
           suppliers_dropped?: number
           suppliers_used: number
-          twap_usd_per_mg: number
+          twap_usd_per_mg?: number | null
           window_end: string
           window_start: string
         }
         Update: {
           computed_at?: string
           created_at?: string
+          dropped_observation_ids?: number[]
           dropped_supplier_twap_ids?: number[]
           id?: number
+          input_observation_ids?: number[]
           input_supplier_twap_ids?: number[]
           median_deviation_bps?: number | null
           peptide_id?: number
           suppliers_dropped?: number
           suppliers_used?: number
-          twap_usd_per_mg?: number
+          twap_usd_per_mg?: number | null
           window_end?: string
           window_start?: string
         }
