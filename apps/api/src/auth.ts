@@ -1,26 +1,56 @@
 import type { Request, Response, NextFunction } from "express";
-import { errors as joseErrors, jwtVerify } from "jose";
+import {
+  createRemoteJWKSet,
+  errors as joseErrors,
+  jwtVerify,
+  type JWTVerifyGetKey,
+} from "jose";
 
 /**
- * Local JWT verification middleware.
+ * Local JWT verification middleware (asymmetric ES256 via JWKS).
  *
- * Supabase signs user access tokens with the project's HS256 JWT secret
- * (Project Settings → API → "JWT Secret"). We verify the signature
- * against that secret using `jose` — purely local crypto, no network
- * round-trip per request, no DB lookup. The verified `sub` claim is the
- * Supabase user id, which is the same UUID stored in
- * public.users.id and used everywhere downstream.
+ * Modern Supabase projects sign user access tokens with an asymmetric
+ * ES256 key (ECC P-256). The matching public key is published at
+ *   <SUPABASE_URL>/auth/v1/.well-known/jwks.json
+ * — a CORS-friendly, unauthenticated endpoint that exposes the JWK set
+ * with a stable `kid` per key.
  *
- * On success, attaches `req.user = { id, email? }`. On failure, responds
- * 401 with a stable error code so the frontend can distinguish missing
- * vs. expired vs. malformed.
+ * We use jose's `createRemoteJWKSet` helper, which:
+ *   - Fetches the JWKS lazily on first verify call.
+ *   - Caches the key set for 10 minutes (jose default
+ *     `cacheMaxAge: 600_000`).
+ *   - Re-fetches on `kid` mismatch, but no more than once every 30s
+ *     (jose default `cooldownDuration: 30_000`) to prevent thundering
+ *     herd against Supabase Auth.
+ *   - Refresh failures fall through as verification errors — we map
+ *     those to AUTH_INVALID so the auth path degrades to "deny" rather
+ *     than "allow" if Supabase Auth is unreachable.
+ *
+ * We keep jose's defaults; bumping cacheMaxAge would risk holding stale
+ * keys past a Supabase rotation, and tightening cooldownDuration would
+ * make the auth endpoint a fast-path attack surface for Supabase Auth.
+ *
+ * Verification claims enforced:
+ *   - signature      against the matching JWK from the cached set
+ *   - alg            must be ES256 (rejects HS256 'alg confusion' attacks
+ *                    if Supabase ever issues a mixed-key project)
+ *   - audience       must be 'authenticated' (Supabase user tokens)
+ *   - issuer         must be `${SUPABASE_URL}/auth/v1` (prevents tokens
+ *                    minted by a *different* Supabase project from
+ *                    passing if both happen to share a JWKS host pattern)
+ *   - exp            jose's jwtVerify enforces the standard exp/nbf claims
+ *
+ * On success: req.user = { id: payload.sub, email?: payload.email }.
+ * On failure: 401 with a stable error code so the frontend can branch
+ * without parsing message text.
  *
  * Error codes:
  *   AUTH_MISSING        no Authorization header
  *   AUTH_BAD_FORMAT     header present but not "Bearer <token>"
  *   AUTH_EXPIRED        signature valid but exp claim in the past
  *   AUTH_INVALID        signature mismatch / bad audience / bad issuer
- *   AUTH_INTERNAL       server-side misconfig (no JWT secret)
+ *                        / JWKS fetch failed / unknown kid past cooldown
+ *   AUTH_INTERNAL       server-side misconfig (SUPABASE_URL missing)
  */
 
 declare global {
@@ -32,15 +62,23 @@ declare global {
   }
 }
 
-let cachedSecret: Uint8Array | null = null;
-function jwtSecret(): Uint8Array {
-  if (cachedSecret) return cachedSecret;
-  const raw = process.env.SUPABASE_JWT_SECRET;
-  if (!raw) {
-    throw new Error("authRequired: SUPABASE_JWT_SECRET is not set");
+let cachedJwks: JWTVerifyGetKey | null = null;
+let cachedIssuer: string | null = null;
+
+function getJwksAndIssuer(): { jwks: JWTVerifyGetKey; issuer: string } {
+  if (cachedJwks && cachedIssuer) {
+    return { jwks: cachedJwks, issuer: cachedIssuer };
   }
-  cachedSecret = new TextEncoder().encode(raw);
-  return cachedSecret;
+  const url = process.env.SUPABASE_URL;
+  if (!url) {
+    throw new Error("authRequired: SUPABASE_URL is not set");
+  }
+  const trimmed = url.replace(/\/+$/, "");
+  cachedJwks = createRemoteJWKSet(
+    new URL(`${trimmed}/auth/v1/.well-known/jwks.json`),
+  );
+  cachedIssuer = `${trimmed}/auth/v1`;
+  return { jwks: cachedJwks, issuer: cachedIssuer };
 }
 
 export async function authRequired(
@@ -63,9 +101,10 @@ export async function authRequired(
   }
   const token = match[1]!.trim();
 
-  let secret: Uint8Array;
+  let jwks: JWTVerifyGetKey;
+  let issuer: string;
   try {
-    secret = jwtSecret();
+    ({ jwks, issuer } = getJwksAndIssuer());
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     res.status(500).json({ code: "AUTH_INTERNAL", message: msg });
@@ -73,9 +112,10 @@ export async function authRequired(
   }
 
   try {
-    const { payload } = await jwtVerify(token, secret, {
-      // Supabase Auth signs user tokens with audience="authenticated".
+    const { payload } = await jwtVerify(token, jwks, {
+      algorithms: ["ES256"],
       audience: "authenticated",
+      issuer,
     });
     const sub = typeof payload.sub === "string" ? payload.sub : null;
     if (!sub) {

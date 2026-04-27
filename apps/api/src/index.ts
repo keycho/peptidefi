@@ -47,7 +47,7 @@ interface HealthSnapshot {
   service: "api";
   started_at: string;
   uptime_seconds: number;
-  auth: "jose-HS256";
+  auth: "jose-ES256-jwks";
   cors: { lovable_pattern: true; static_origins: string[]; env_extra_count: number };
 }
 
@@ -84,7 +84,7 @@ function buildApp(): express.Express {
       service: "api",
       started_at: startedAtIso,
       uptime_seconds: Math.floor((Date.now() - startedAt.getTime()) / 1000),
-      auth: "jose-HS256",
+      auth: "jose-ES256-jwks",
       cors: {
         lovable_pattern: true,
         static_origins: [
@@ -130,7 +130,7 @@ async function main(): Promise<void> {
 
   const server = app.listen(apiPort, "0.0.0.0", () => {
     console.log(
-      `[startup] api listening on :${apiPort}, /health on same port, auth=jose-HS256`,
+      `[startup] api listening on :${apiPort}, /health on same port, auth=jose-ES256-jwks`,
     );
   });
 

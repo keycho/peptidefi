@@ -82,9 +82,10 @@ override.
 
 | variable | required? | description | where to get it |
 |---|---|---|---|
-| `SUPABASE_JWT_SECRET` | **required** | HS256 secret used by Supabase Auth to sign user access tokens. The API verifies incoming `Authorization: Bearer …` JWTs locally with this secret — no network round-trip per request, no DB lookup. **Distinct from `SUPABASE_SECRET_KEY`.** | Supabase dashboard → Project Settings → API → "JWT Settings" → **JWT Secret** (the legacy field; still used to sign user tokens by default). |
 | `API_PORT` | optional | HTTP port the API listens on. Default `3000`. Railway auto-injects `PORT` which takes precedence — usually you don't need to set either. | — |
 | `CORS_ORIGINS` | optional | Comma-separated extra origins to allow via CORS, in addition to the baked-in `localhost{,:5173}` and `https://*.lovable.{app,dev,project.com}` patterns. Set this once you know the production custom domain. | — |
+
+The API does **not** use a JWT secret. Supabase signs user access tokens with an asymmetric ES256 key; the API fetches the matching public-key set lazily from `${SUPABASE_URL}/auth/v1/.well-known/jwks.json` via jose's `createRemoteJWKSet` helper (10-minute cache, 30-second cooldown on `kid`-mismatch refetch — both jose defaults; see `apps/api/src/auth.ts`). No `SUPABASE_JWT_SECRET` env var is needed.
 
 The API does **not** use `HEALTH_PORT` — `/health` is mounted on `API_PORT` (same Express server) so Railway's single-port healthcheck routes to it correctly. The standalone-health-server pattern is for the scraper and worker, which have no public API surface to share a port with.
 
