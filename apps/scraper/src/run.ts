@@ -17,6 +17,7 @@ import {
   writeObservation,
 } from "./persist";
 import { getModule } from "./suppliers";
+import { getProxyCreditsUsed } from "./suppliers/woocommerce";
 
 /**
  * Single scraper cycle. Open a run, fetch FX, scrape every active
@@ -38,6 +39,10 @@ export interface CycleSummary {
   status: "success" | "partial" | "failed";
   errorSummary: string | null;
   durationMs: number;
+  /** True when SCRAPER_USE_PROXY=true and the API key is set. */
+  proxyEnabled: boolean;
+  /** Cumulative ScrapingAnt credits used since process startup. */
+  proxyCreditsSession: number;
 }
 
 export async function runOnce(): Promise<CycleSummary> {
@@ -67,6 +72,9 @@ export async function runOnce(): Promise<CycleSummary> {
       status: "failed",
       error_summary: `loadActiveProducts: ${msg}`,
     });
+    const proxyEnabled =
+      (process.env.SCRAPER_USE_PROXY ?? "").toLowerCase() === "true" &&
+      !!process.env.SCRAPINGANT_API_KEY;
     return {
       runId,
       attempted: 0,
@@ -75,6 +83,8 @@ export async function runOnce(): Promise<CycleSummary> {
       status: "failed",
       errorSummary: msg,
       durationMs: Date.now() - startedAt,
+      proxyEnabled,
+      proxyCreditsSession: getProxyCreditsUsed(),
     };
   }
 
@@ -149,6 +159,10 @@ export async function runOnce(): Promise<CycleSummary> {
     error_summary: errorSummary,
   });
 
+  const proxyEnabled =
+    (process.env.SCRAPER_USE_PROXY ?? "").toLowerCase() === "true" &&
+    !!process.env.SCRAPINGANT_API_KEY;
+
   return {
     runId,
     attempted: products.length,
@@ -157,6 +171,8 @@ export async function runOnce(): Promise<CycleSummary> {
     status,
     errorSummary,
     durationMs: Date.now() - startedAt,
+    proxyEnabled,
+    proxyCreditsSession: getProxyCreditsUsed(),
   };
 }
 

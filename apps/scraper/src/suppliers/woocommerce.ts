@@ -67,6 +67,92 @@ const REQUEST_HEADERS: Record<string, string> = {
 const RATIO_RE = /\b(?:g|mg)\s*\/\s*(?:mol|mole|kg|L|liter|liters)\b/i;
 
 /**
+ * ScrapingAnt proxy integration.
+ *
+ * When SCRAPER_USE_PROXY=true and SCRAPINGANT_API_KEY is set, every
+ * catalog fetch is routed through ScrapingAnt's /v2/general endpoint so
+ * vendor WAFs see ScrapingAnt's residential / datacenter pool instead of
+ * our origin IP. This is what unblocks NUSCIENCE / GENETIC / VERIFIED /
+ * PULSE from datacenter IP class.
+ *
+ * Pricing: 1 credit per fetch with browser=false (HTML/JSON passthrough,
+ * no JS rendering — perfect for the WC Store API JSON endpoints we hit).
+ * Free tier = 10,000 credits. Six vendors × one catalog fetch per cycle =
+ * 6 credits/cycle. At a 60s cycle that's 360/hour — burns the free tier
+ * in ~28 hours. Bump SCRAPER_CYCLE_INTERVAL_MS to 600000 (10 min) during
+ * free-tier testing to stretch to ~7 days.
+ *
+ * Response shape (per ScrapingAnt v2 docs): the response body is the
+ * target site's response body, passed through. Their HTTP status reflects
+ * proxy success (200 even when target returned 503), so we still verify
+ * the body parses as JSON before trusting it. Existing retry/error
+ * paths therefore work unchanged.
+ */
+const SCRAPINGANT_BASE = "https://api.scrapingant.com/v2/general";
+
+interface ProxyConfig {
+  apiKey: string;
+}
+
+let proxyCreditsUsed = 0;
+
+/** Number of proxy requests this process has issued. Reset only by restart. */
+export function getProxyCreditsUsed(): number {
+  return proxyCreditsUsed;
+}
+
+function readProxyConfig(): ProxyConfig | null {
+  const flag = (process.env.SCRAPER_USE_PROXY ?? "false").toLowerCase();
+  if (flag !== "true" && flag !== "1") return null;
+  const apiKey = process.env.SCRAPINGANT_API_KEY;
+  if (!apiKey) {
+    // Only warn once per process. Cheap dedupe via a module-scoped flag.
+    if (!warnedAboutMissingKey) {
+      console.warn(
+        "[woo] SCRAPER_USE_PROXY=true but SCRAPINGANT_API_KEY is not set; falling back to direct fetch",
+      );
+      warnedAboutMissingKey = true;
+    }
+    return null;
+  }
+  return { apiKey };
+}
+let warnedAboutMissingKey = false;
+
+/**
+ * Single fetch entry point — proxy-aware. timeoutMs is applied to the
+ * outer request; ScrapingAnt typically adds 2-5s of latency vs direct.
+ *
+ * Headers passed to the target are mostly ignored by ScrapingAnt
+ * (they set their own browser-like UA). We don't bother forwarding
+ * REQUEST_HEADERS through the proxy.
+ */
+async function proxiedFetch(
+  targetUrl: string,
+  opts: { timeoutMs: number },
+): Promise<Response> {
+  const proxy = readProxyConfig();
+  if (!proxy) {
+    return fetch(targetUrl, {
+      headers: REQUEST_HEADERS,
+      signal: AbortSignal.timeout(opts.timeoutMs),
+    });
+  }
+  const params = new URLSearchParams({
+    url: targetUrl,
+    "x-api-key": proxy.apiKey,
+    browser: "false",
+    proxy_country: "US",
+  });
+  const res = await fetch(`${SCRAPINGANT_BASE}?${params.toString()}`, {
+    headers: { accept: "application/json,text/plain,*/*" },
+    signal: AbortSignal.timeout(opts.timeoutMs),
+  });
+  proxyCreditsUsed += 1;
+  return res;
+}
+
+/**
  * Convert WooCommerce Store API minor-units → major-units decimal string.
  *
  *   ("10900", 2) → "109.00000000"     // $109.00
@@ -297,10 +383,7 @@ class WooSupplierModule {
       const delay = delays[attempt]!;
       if (delay > 0) await new Promise((r) => setTimeout(r, delay));
       try {
-        const res = await fetch(url, {
-          headers: REQUEST_HEADERS,
-          signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-        });
+        const res = await proxiedFetch(url, { timeoutMs: FETCH_TIMEOUT_MS });
         if (!res.ok) {
           lastErr = new Error(`HTTP ${res.status} fetching ${url}`);
           continue;

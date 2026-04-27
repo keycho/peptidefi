@@ -3,17 +3,28 @@ import { runOnce } from "./run";
 
 /**
  * CLI entry. Two modes:
- *   pnpm dev             — loop forever, sleeping SCRAPE_INTERVAL_MS between
- *                           cycles (default 60s). Used in dev and on Railway.
+ *   pnpm dev             — loop forever, sleeping SCRAPER_CYCLE_INTERVAL_MS
+ *                           between cycles (default 60s). Used in dev and
+ *                           on Railway.
  *   pnpm once / --once   — run a single cycle and exit. Used for manual
  *                           testing, debugging, and from scripts.
+ *
+ * Cycle interval env var: SCRAPER_CYCLE_INTERVAL_MS is the canonical name.
+ * SCRAPE_INTERVAL_MS is kept as a back-compat fallback for the .env files
+ * we wrote earlier in this branch. Default 60000.
+ *
+ * Set SCRAPER_CYCLE_INTERVAL_MS=600000 (10 min) during ScrapingAnt
+ * free-tier soak to stretch the 10k credit pool across ~7 days at 6
+ * credits/cycle.
  *
  * Graceful shutdown: SIGINT / SIGTERM flip a flag that prevents the next
  * cycle from starting. The current in-flight cycle finishes naturally so
  * we never leave a scraper_runs row stuck in 'running'.
  */
 const intervalMs = Number.parseInt(
-  process.env.SCRAPE_INTERVAL_MS ?? "60000",
+  process.env.SCRAPER_CYCLE_INTERVAL_MS ??
+    process.env.SCRAPE_INTERVAL_MS ??
+    "60000",
   10,
 );
 
@@ -36,6 +47,9 @@ function fmtSummary(s: Awaited<ReturnType<typeof runOnce>>): string {
     `${s.succeeded}/${s.attempted} ok`,
     `${s.failed} failed`,
     `${s.durationMs}ms`,
+    s.proxyEnabled
+      ? `proxy=on credits_session=${s.proxyCreditsSession}`
+      : "proxy=off",
     s.errorSummary ? `errors=${s.errorSummary}` : "",
   ]
     .filter(Boolean)
