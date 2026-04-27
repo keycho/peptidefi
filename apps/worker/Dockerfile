@@ -1,8 +1,12 @@
-# PeptideFi TWAP worker
+# PeptideFi TWAP worker — slim runtime image.
 #
-# Pure compute service — only talks to Supabase, no headless browsers, so we
-# use a slim Node base. Build context is the monorepo root (workspace deps
-# resolve via pnpm symlinks at install time).
+# Pure compute service: only talks to Supabase, no headless browsers, no
+# vendor scraping. Same Node 20 alpine base as the scraper for consistency.
+#
+# Build context is the monorepo root (workspace deps resolve via pnpm
+# symlinks at install time):
+#
+#   docker build -t peptidefi-worker -f apps/worker/Dockerfile .
 
 FROM node:20-alpine
 
@@ -28,4 +32,5 @@ COPY packages/shared packages/shared
 
 WORKDIR /app/apps/worker
 
+EXPOSE 8080
 CMD ["pnpm", "start"]

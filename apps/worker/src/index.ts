@@ -1,4 +1,9 @@
 import "dotenv/config";
+import {
+  type HealthState,
+  sleepInterruptible,
+  startHealthServer,
+} from "@peptidefi/shared";
 import { runOnce } from "./run";
 
 /**
@@ -7,9 +12,13 @@ import { runOnce } from "./run";
  *                            between cycles (default 60s).
  *   pnpm once / --once     — single cycle, exit. Manual testing path.
  *
- * Graceful shutdown: SIGINT / SIGTERM flip a flag that prevents the next
- * cycle. The current in-flight cycle finishes naturally so we never leave
- * a peptide_twaps row half-written.
+ * Health endpoint: HTTP GET /health on HEALTH_PORT (default 8080) returns a
+ * JSON snapshot of cycle state. Healthy iff the last cycle finished within
+ * 2× the cycle interval. Railway uses this for deploy checks.
+ *
+ * Graceful shutdown: SIGTERM/SIGINT abort the inter-cycle sleep, let the
+ * in-flight cycle finish, close the health server, and exit 0. We never
+ * leave a peptide_twaps row half-written.
  */
 
 const intervalMs = Number.parseInt(
@@ -17,16 +26,40 @@ const intervalMs = Number.parseInt(
   10,
 );
 
+const healthPort = Number.parseInt(process.env.HEALTH_PORT ?? "8080", 10);
+
 const runOnceFlag = process.argv.includes("--once");
+
+const startedAt = new Date().toISOString();
+const health: HealthState = {
+  service: "worker",
+  started_at: startedAt,
+  cycles_completed: 0,
+  cycles_failed: 0,
+  last_cycle_started_at: null,
+  last_cycle_finished_at: null,
+  last_cycle_status: null,
+  last_cycle_duration_ms: null,
+};
+
+const shutdownAbort = new AbortController();
+let stopRequested = false;
+function requestShutdown(signal: string): void {
+  if (stopRequested) return;
+  stopRequested = true;
+  console.log(`\n[shutdown] ${signal} received — finishing current cycle, then exiting`);
+  shutdownAbort.abort();
+}
+process.on("SIGINT", () => requestShutdown("SIGINT"));
+process.on("SIGTERM", () => requestShutdown("SIGTERM"));
 
 /**
  * Startup sanity check: warn if the worker cadence + freshness ceiling
  * combination is set up to produce thin-data rows between scrapes.
  *
  * Misconfig pattern: worker runs every 60s, scraper runs every 10 min,
- * worker considers only the last 5 min of obs. Most worker cycles fall
- * between scrapes and find nothing → wave of NULL TWAPs. The 03:39 UTC
- * incident this commit fixes was exactly this.
+ * worker considers only the last 5 min of obs → most worker cycles fall
+ * between scrapes and find nothing → wave of NULL TWAPs.
  *
  * The check needs both env vars in this process. On a single-host deploy
  * (sandbox, dev) both are typically present. On Railway with separate
@@ -53,16 +86,6 @@ function checkConfig(): void {
   }
 }
 
-let stopRequested = false;
-process.on("SIGINT", () => {
-  console.log("\n[shutdown] SIGINT — finishing cycle, exiting");
-  stopRequested = true;
-});
-process.on("SIGTERM", () => {
-  console.log("\n[shutdown] SIGTERM — finishing cycle, exiting");
-  stopRequested = true;
-});
-
 function fmtSummary(s: Awaited<ReturnType<typeof runOnce>>): string {
   return [
     `processed=${s.peptidesProcessed}`,
@@ -75,42 +98,59 @@ function fmtSummary(s: Awaited<ReturnType<typeof runOnce>>): string {
 }
 
 async function safeCycle(): Promise<void> {
+  health.last_cycle_started_at = new Date().toISOString();
   try {
     const summary = await runOnce();
     console.log(`[twap] ${fmtSummary(summary)}`);
+    health.cycles_completed += 1;
+    health.last_cycle_status =
+      summary.peptidesWithThinData === summary.peptidesProcessed
+        ? "all_thin"
+        : "ok";
+    health.last_cycle_duration_ms = summary.durationMs;
+    health.extra = {
+      peptides_processed: summary.peptidesProcessed,
+      peptides_with_twap: summary.peptidesWithTwap,
+      peptides_with_thin_data: summary.peptidesWithThinData,
+    };
   } catch (err) {
     const msg = err instanceof Error ? err.stack ?? err.message : String(err);
     console.error(`[twap] FAILED ${msg}`);
+    health.cycles_failed += 1;
+    health.last_cycle_status = "failed";
+  } finally {
+    health.last_cycle_finished_at = new Date().toISOString();
   }
 }
 
 async function main(): Promise<void> {
   checkConfig();
 
-  if (runOnceFlag) {
-    await safeCycle();
-    return;
-  }
-
-  console.log(
-    `[startup] worker running on ${intervalMs}ms interval (--once to run a single cycle)`,
-  );
-
-  while (!stopRequested) {
-    await safeCycle();
-    if (stopRequested) break;
-    await sleep(intervalMs);
-  }
-  console.log("[shutdown] clean exit");
-}
-
-function sleep(ms: number): Promise<void> {
-  // Do NOT unref() the timer — it IS the loop. Without a TTY (Docker /
-  // Railway / background processes) there's nothing else holding the event
-  // loop open, so unref'ing here causes Node to exit between cycles.
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
+  const healthServer = startHealthServer({
+    port: healthPort,
+    state: () => health,
+    staleAfterMs: intervalMs * 2,
   });
+  console.log(`[startup] health endpoint on :${healthPort}/health`);
+
+  try {
+    if (runOnceFlag) {
+      await safeCycle();
+      return;
+    }
+
+    console.log(
+      `[startup] worker looping on ${intervalMs}ms interval (--once for a single cycle)`,
+    );
+    while (!stopRequested) {
+      await safeCycle();
+      if (stopRequested) break;
+      await sleepInterruptible(intervalMs, shutdownAbort.signal);
+    }
+    console.log("[shutdown] clean exit");
+  } finally {
+    await new Promise<void>((resolve) => healthServer.close(() => resolve()));
+  }
 }
 
 main().catch((err) => {
