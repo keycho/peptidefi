@@ -428,6 +428,7 @@ export type Database = {
       }
       peptides: {
         Row: {
+          category: string | null
           code: string
           created_at: string
           description: string | null
@@ -439,6 +440,7 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          category?: string | null
           code: string
           created_at?: string
           description?: string | null
@@ -450,6 +452,7 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          category?: string | null
           code?: string
           created_at?: string
           description?: string | null

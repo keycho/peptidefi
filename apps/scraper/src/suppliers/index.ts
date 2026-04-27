@@ -31,18 +31,20 @@ export interface SupplierModule {
 /**
  * Active supplier modules.
  *
- *   Tier 1 (live): six WooCommerce vendors backed by the shared module.
+ *   Tier 1 (live): eight WooCommerce vendors backed by the shared module.
  *     The factory wires per-vendor host config; the catalog fetch + parse
- *     code lives in woocommerce.ts and is identical across the six.
+ *     code lives in woocommerce.ts and is identical across all of them.
  *
  *   Tier 2 (deferred): LIMITLESS (BigCommerce HTML scrape) and PARTICLE
- *     (PrestaShop HTML scrape). Will land as a separate commit after the
- *     Tier-1 soak passes.
+ *     (PrestaShop HTML scrape). Both confirmed scrapable via cheerio
+ *     during recon but need per-platform parsers; deferred until needed.
  *
  *   Paused: BACHEM and SIGMA (anti-bot blocks from datacenter IPs; need
  *     residential proxy or Cloudflare bypass). CAYMAN (different market
  *     tier — research-grade vs consumer; tracked separately as future
- *     reference price feature).
+ *     reference price feature). MODERNAMINOS (Cloudflare anti-bot
+ *     beats ScrapingAnt's standard tier — paused via supplier.status
+ *     in the DB).
  *
  * Codes that don't match a registered module fall through to the
  * stubModule below, which writes a clean failure row so the audit trail
@@ -57,6 +59,11 @@ export const SUPPLIERS: Partial<Record<string, SupplierModule>> = {
   LIBERTY:    createWooModule({ supplierCode: "LIBERTY",    host: "libertypeptides.com" }),
   GENETIC:    createWooModule({ supplierCode: "GENETIC",    host: "geneticpeptide.com" }),
   PULSE:      createWooModule({ supplierCode: "PULSE",      host: "pulsepeptides.com" }),
+  // Added in migration 0019. SWISSCHEMS is reachable only via ScrapingAnt;
+  // the WC module's existing retry loop (3s/8s) covers swisschems' upstream
+  // flakiness during typical deploys.
+  PURERAWZ:   createWooModule({ supplierCode: "PURERAWZ",   host: "purerawz.co" }),
+  SWISSCHEMS: createWooModule({ supplierCode: "SWISSCHEMS", host: "swisschems.is" }),
 };
 
 const stubModule: SupplierModule = {
