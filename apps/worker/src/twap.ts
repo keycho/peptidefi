@@ -1,9 +1,4 @@
-import {
-  bn,
-  median,
-  toNumeric,
-  type Numeric,
-} from "@peptidefi/shared";
+import { bn, median, type Numeric } from "@peptidefi/shared";
 
 /**
  * Cross-supplier TWAP computation, per-peptide, per-cycle.
@@ -12,22 +7,28 @@ import {
  * inside the configured window. Caller is responsible for the SQL
  * "latest per supplier" reduction.
  *
- * Algorithm (as confirmed by user):
- *   1. If fewer than 2 reporting suppliers → no TWAP. Return a thin-data
- *      result so the caller can persist a NULL audit row instead of
- *      fabricating a single-supplier "TWAP".
- *   2. If 2 suppliers → median = arithmetic mean. No outlier filtering
- *      (would always drop one of the two).
- *   3. If 3+ suppliers → compute cross-supplier median; drop any obs
- *      whose price deviates more than 5% from that median; recompute
- *      median over the kept set as the canonical TWAP. Dropped rows
- *      are logged via outlier_log by the caller.
+ * v1 algorithm — straight median, no outlier filtering:
+ *   - n=0  → thin_data (no_suppliers).
+ *   - n=1  → thin_data (single_supplier). Honest signal beats a fake
+ *             single-supplier "consensus".
+ *   - n≥2  → median across all valid observations. Done.
  *
- * median_deviation_bps is the maximum |obs - median| / median expressed in
- * basis points across the KEPT observations. Diagnostic only.
+ * Why no outlier filter in v1:
+ *   The consumer peptide market genuinely has 2-3× spreads between vendors.
+ *   That spread is a feature of the market, not noise. A 5% threshold
+ *   drops legitimate observations and synthesises fake consensus from
+ *   1-2 survivors. The median is already robust to extreme values; that's
+ *   the whole point of using median over mean. Stacking outlier filtering
+ *   on top of the median is over-engineering for our actual data shape.
+ *
+ *   Schema columns dropped_observation_ids and outlier_log are kept in
+ *   place — when we revisit (likely with MAD-based filtering after v1),
+ *   we won't need a migration to re-enable.
+ *
+ * median_deviation_bps stays populated as a diagnostic — max
+ * |obs − median| / median across the kept set, in basis points. High
+ * values are informational, not action items.
  */
-
-const OUTLIER_THRESHOLD_PCT = 0.05; // 5% per spec
 
 export interface TwapInput {
   /** supplier_observation.id */
@@ -64,58 +65,15 @@ export function computeTwap(observations: TwapInput[]): TwapResult {
     };
   }
 
-  if (observations.length === 2) {
-    // Two-supplier case: arithmetic mean (== median for n=2). No outliers.
-    const med = median(observations.map((o) => o.priceUsdPerMg));
-    const deviation = maxDeviationBps(observations, med);
-    return {
-      kind: "computed",
-      twap: med,
-      kept: observations,
-      dropped: [],
-      medianDeviationBps: deviation,
-    };
-  }
-
-  // 3+ suppliers: outlier-aware
-  const seedPrices = observations.map((o) => o.priceUsdPerMg);
-  const seedMedian = median(seedPrices);
-  const threshold = bn(seedMedian).times(OUTLIER_THRESHOLD_PCT);
-
-  const kept: TwapInput[] = [];
-  const dropped: TwapInput[] = [];
-  for (const obs of observations) {
-    const deviation = bn(obs.priceUsdPerMg).minus(seedMedian).abs();
-    if (deviation.gt(threshold)) {
-      dropped.push(obs);
-    } else {
-      kept.push(obs);
-    }
-  }
-
-  // Defensive: if EVERY supplier was an outlier (shouldn't happen with a
-  // 5% threshold around their own median, but algebraic edge cases exist
-  // when prices are clustered far from the median), fall back to no-drop.
-  if (kept.length === 0) {
-    const dev = maxDeviationBps(observations, seedMedian);
-    return {
-      kind: "computed",
-      twap: seedMedian,
-      kept: observations,
-      dropped: [],
-      medianDeviationBps: dev,
-    };
-  }
-
-  // Recompute median over kept set for the final TWAP.
-  const finalTwap = median(kept.map((o) => o.priceUsdPerMg));
-  const dev = maxDeviationBps(kept, finalTwap);
+  // n ≥ 2: straight median, every observation kept. dropped is always [].
+  const twap = median(observations.map((o) => o.priceUsdPerMg));
+  const deviation = maxDeviationBps(observations, twap);
   return {
     kind: "computed",
-    twap: finalTwap,
-    kept,
-    dropped,
-    medianDeviationBps: dev,
+    twap,
+    kept: observations,
+    dropped: [],
+    medianDeviationBps: deviation,
   };
 }
 
@@ -138,6 +96,4 @@ function maxDeviationBps(
   return Math.round(max);
 }
 
-/** Re-export for convenience in tests / callers. */
-export { OUTLIER_THRESHOLD_PCT };
 export const _internal = { maxDeviationBps };
