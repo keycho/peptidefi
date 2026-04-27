@@ -1,22 +1,37 @@
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
 
-type CookiesToSet = { name: string; value: string; options: CookieOptions }[];
 import { NextResponse, type NextRequest } from "next/server";
 import type { Database } from "@peptidefi/db";
+
+type CookiesToSet = { name: string; value: string; options: CookieOptions }[];
 
 /**
  * Per-request session refresh + auth gate.
  *
- * The Supabase JWT is short-lived; this helper, called from middleware.ts on
- * every request, transparently refreshes the access token by reading and
- * rewriting the auth cookie. The request and response cookie jars are kept
- * in sync so downstream Server Components see the refreshed session.
+ * The product is public-by-default, gated-on-action (Hyperliquid /
+ * Polymarket / Uniswap pattern). Anyone can browse the storefront —
+ * prices, charts, AMM screens, prediction markets, leaderboard — without
+ * a session. Login is only required for routes that read a user's
+ * personal state (portfolio, account) or that mutate it (trade APIs).
  *
- * Auth gate: any path outside the PUBLIC_PATHS set requires a logged-in user.
- * Unauthenticated visitors get a 302 to /login. Logged-in users hitting
- * /login or /signup get bounced to /.
+ * Auth flow: this helper is called from middleware.ts on every matched
+ * request. It refreshes the Supabase access token (via getUser, which
+ * reads + rewrites the auth cookie). The request and response cookie
+ * jars are kept in sync so downstream Server Components see the
+ * refreshed session.
+ *
+ * Gating rules:
+ *   - DENY_PREFIXES require an authenticated session; logged-out
+ *     visitors are redirected to /login?next=<path>.
+ *   - /login and /signup bounce already-logged-in users to /.
+ *   - Everything else is public — anonymous visitors flow through
+ *     untouched.
+ *
+ * Add new private routes by appending to DENY_PREFIXES. API routes
+ * that mutate user state should also enforce the session check at the
+ * handler level (defense in depth).
  */
-const PUBLIC_PATHS = ["/login", "/signup", "/auth/callback"];
+const DENY_PREFIXES = ["/portfolio", "/account"];
 
 export async function updateSession(request: NextRequest) {
   let response = NextResponse.next({ request });
@@ -49,14 +64,14 @@ export async function updateSession(request: NextRequest) {
   } = await supabase.auth.getUser();
 
   const path = request.nextUrl.pathname;
-  const isPublic = PUBLIC_PATHS.some(
+  const isPrivate = DENY_PREFIXES.some(
     (p) => path === p || path.startsWith(`${p}/`),
   );
 
-  if (!user && !isPublic) {
+  if (!user && isPrivate) {
     const url = request.nextUrl.clone();
     url.pathname = "/login";
-    url.searchParams.set("next", path);
+    url.search = `?next=${encodeURIComponent(path)}`;
     return NextResponse.redirect(url);
   }
 

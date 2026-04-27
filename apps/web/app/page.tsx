@@ -1,20 +1,14 @@
-import { redirect } from "next/navigation";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { createClient } from "@/lib/supabase/server";
+import { AuthStatus } from "@/components/auth-status";
 
 /**
- * Protected home placeholder for Phase A. Charts arrive in the next sub-step.
- * Middleware already redirects unauthenticated visitors to /login, but we
- * re-check here defensively.
+ * Public home placeholder. Anyone can land here without a session — login
+ * is gated only on private routes (/portfolio, /account) and on action
+ * APIs that mutate user state. The header's <AuthStatus /> swaps between
+ * a "Sign in" button (guest) and email + sign-out form (member).
+ *
+ * Charts replace this placeholder in the next sub-step.
  */
 export default async function HomePage() {
-  const supabase = createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) redirect("/login");
-
   return (
     <main className="terminal-grid min-h-screen">
       <header className="border-b border-border">
@@ -27,29 +21,14 @@ export default async function HomePage() {
               Season 1
             </span>
           </div>
-          <form action="/auth/sign-out" method="post">
-            <Button type="submit" variant="outline" size="sm">
-              Sign out
-            </Button>
-          </form>
+          <AuthStatus />
         </div>
       </header>
 
       <section className="container py-10">
-        <Card className="max-w-md">
-          <CardHeader>
-            <CardTitle className="text-base">You&rsquo;re in.</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-sm text-muted-foreground">
-              Logged in as{" "}
-              <span className="num text-foreground">{user.email}</span>.
-            </p>
-            <p className="mt-2 text-xs text-muted-foreground">
-              Charts will land in the next sub-step.
-            </p>
-          </CardContent>
-        </Card>
+        <p className="text-sm text-muted-foreground">
+          PeptideFi — public home. Charts coming next sub-step.
+        </p>
       </section>
     </main>
   );
