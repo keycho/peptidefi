@@ -65,4 +65,20 @@ export const errors = {
   internal(res: Response, message: string) {
     sendError(res, 500, "INTERNAL", message);
   },
+  displayNameTaken(res: Response, displayName: string) {
+    sendError(res, 409, "DISPLAY_NAME_TAKEN",
+      `display_name "${displayName}" is already in use`,
+      { display_name: displayName });
+  },
+  rateLimited(
+    res: Response,
+    reason: string,
+    retryAfterSeconds: number,
+    extra?: Record<string, unknown>,
+  ) {
+    res.set("Retry-After", String(retryAfterSeconds));
+    sendError(res, 429, "RATE_LIMITED",
+      `${reason}. Retry after ${retryAfterSeconds}s`,
+      { retry_after_seconds: retryAfterSeconds, ...(extra ?? {}) });
+  },
 };

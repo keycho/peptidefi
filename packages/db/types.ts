@@ -129,6 +129,13 @@ export type Database = {
             foreignKeyName: "amm_trades_user_id_fkey"
             columns: ["user_id"]
             isOneToOne: false
+            referencedRelation: "leaderboard"
+            referencedColumns: ["user_id"]
+          },
+          {
+            foreignKeyName: "amm_trades_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
             referencedRelation: "users"
             referencedColumns: ["id"]
           },
@@ -476,6 +483,13 @@ export type Database = {
             foreignKeyName: "point_balances_user_id_fkey"
             columns: ["user_id"]
             isOneToOne: true
+            referencedRelation: "leaderboard"
+            referencedColumns: ["user_id"]
+          },
+          {
+            foreignKeyName: "point_balances_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: true
             referencedRelation: "users"
             referencedColumns: ["id"]
           },
@@ -507,6 +521,13 @@ export type Database = {
           user_id?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "point_grants_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "leaderboard"
+            referencedColumns: ["user_id"]
+          },
           {
             foreignKeyName: "point_grants_user_id_fkey"
             columns: ["user_id"]
@@ -548,6 +569,13 @@ export type Database = {
           user_id?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "point_ledger_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "leaderboard"
+            referencedColumns: ["user_id"]
+          },
           {
             foreignKeyName: "point_ledger_user_id_fkey"
             columns: ["user_id"]
@@ -677,6 +705,13 @@ export type Database = {
             foreignKeyName: "positions_user_id_fkey"
             columns: ["user_id"]
             isOneToOne: false
+            referencedRelation: "leaderboard"
+            referencedColumns: ["user_id"]
+          },
+          {
+            foreignKeyName: "positions_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
             referencedRelation: "users"
             referencedColumns: ["id"]
           },
@@ -751,6 +786,13 @@ export type Database = {
             foreignKeyName: "prediction_markets_created_by_fkey"
             columns: ["created_by"]
             isOneToOne: false
+            referencedRelation: "leaderboard"
+            referencedColumns: ["user_id"]
+          },
+          {
+            foreignKeyName: "prediction_markets_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
             referencedRelation: "users"
             referencedColumns: ["id"]
           },
@@ -810,6 +852,13 @@ export type Database = {
             foreignKeyName: "prediction_positions_user_id_fkey"
             columns: ["user_id"]
             isOneToOne: false
+            referencedRelation: "leaderboard"
+            referencedColumns: ["user_id"]
+          },
+          {
+            foreignKeyName: "prediction_positions_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
             referencedRelation: "users"
             referencedColumns: ["id"]
           },
@@ -856,6 +905,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "prediction_markets"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "prediction_trades_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "leaderboard"
+            referencedColumns: ["user_id"]
           },
           {
             foreignKeyName: "prediction_trades_user_id_fkey"
@@ -1168,7 +1224,8 @@ export type Database = {
       users: {
         Row: {
           created_at: string
-          display_name: string | null
+          display_name: string
+          display_name_changed_at: string | null
           email: string | null
           id: string
           is_admin: boolean
@@ -1180,7 +1237,8 @@ export type Database = {
         }
         Insert: {
           created_at?: string
-          display_name?: string | null
+          display_name: string
+          display_name_changed_at?: string | null
           email?: string | null
           id?: string
           is_admin?: boolean
@@ -1192,7 +1250,8 @@ export type Database = {
         }
         Update: {
           created_at?: string
-          display_name?: string | null
+          display_name?: string
+          display_name_changed_at?: string | null
           email?: string | null
           id?: string
           is_admin?: boolean
@@ -1207,6 +1266,13 @@ export type Database = {
             foreignKeyName: "users_referred_by_fkey"
             columns: ["referred_by"]
             isOneToOne: false
+            referencedRelation: "leaderboard"
+            referencedColumns: ["user_id"]
+          },
+          {
+            foreignKeyName: "users_referred_by_fkey"
+            columns: ["referred_by"]
+            isOneToOne: false
             referencedRelation: "users"
             referencedColumns: ["id"]
           },
@@ -1214,7 +1280,21 @@ export type Database = {
       }
     }
     Views: {
-      [_ in never]: never
+      leaderboard: {
+        Row: {
+          display_name: string | null
+          last_active_at: string | null
+          open_positions_count: number | null
+          rank: number | null
+          realized_pnl: number | null
+          total_balance: number | null
+          total_equity: number | null
+          total_trades: number | null
+          unrealized_pnl: number | null
+          user_id: string | null
+        }
+        Relationships: []
+      }
     }
     Functions: {
       close_position: {
@@ -1226,6 +1306,7 @@ export type Database = {
         }
         Returns: Json
       }
+      generate_unique_display_name: { Args: never; Returns: string }
       open_position: {
         Args: {
           p_direction: Database["public"]["Enums"]["position_direction"]

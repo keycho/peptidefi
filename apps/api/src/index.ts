@@ -4,12 +4,17 @@ import cors from "cors";
 import { authRequired } from "./auth";
 import { corsOptions } from "./cors-config";
 import { balanceHandler } from "./routes/balance";
+import { leaderboardHandler } from "./routes/leaderboard";
 import {
   closePositionHandler,
   getPositionHandler,
   listPositionsHandler,
   openPositionHandler,
 } from "./routes/positions";
+import {
+  getProfileHandler,
+  updateDisplayNameHandler,
+} from "./routes/profile";
 
 /**
  * PeptideFi API — Express server.
@@ -108,6 +113,9 @@ function buildApp(): express.Express {
     res.set("cache-control", "no-store").json(snapshot);
   });
 
+  // Public routes (no auth).
+  app.get("/leaderboard", leaderboardHandler);
+
   // Protected routes — authRequired applied per route, so unknown paths
   // fall through to the 404 handler instead of being challenged for
   // credentials they shouldn't even need.
@@ -116,6 +124,8 @@ function buildApp(): express.Express {
   app.post("/positions/:id/close", authRequired, closePositionHandler);
   app.get("/positions", authRequired, listPositionsHandler);
   app.get("/positions/:id", authRequired, getPositionHandler);
+  app.get("/profile", authRequired, getProfileHandler);
+  app.patch("/profile/display-name", authRequired, updateDisplayNameHandler);
 
   // 404 for anything not matched above.
   app.use((_req, res) => {
