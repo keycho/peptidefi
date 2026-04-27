@@ -19,6 +19,40 @@ const intervalMs = Number.parseInt(
 
 const runOnceFlag = process.argv.includes("--once");
 
+/**
+ * Startup sanity check: warn if the worker cadence + freshness ceiling
+ * combination is set up to produce thin-data rows between scrapes.
+ *
+ * Misconfig pattern: worker runs every 60s, scraper runs every 10 min,
+ * worker considers only the last 5 min of obs. Most worker cycles fall
+ * between scrapes and find nothing → wave of NULL TWAPs. The 03:39 UTC
+ * incident this commit fixes was exactly this.
+ *
+ * The check needs both env vars in this process. On a single-host deploy
+ * (sandbox, dev) both are typically present. On Railway with separate
+ * services, set SCRAPER_CYCLE_INTERVAL_MS in the worker service too so
+ * this check works.
+ */
+function checkConfig(): void {
+  const scraperRaw = process.env.SCRAPER_CYCLE_INTERVAL_MS;
+  if (!scraperRaw) return;
+  const scraperInterval = Number.parseInt(scraperRaw, 10);
+  if (!Number.isFinite(scraperInterval) || scraperInterval <= 0) return;
+  const freshness = Number.parseInt(
+    process.env.WORKER_FRESHNESS_CEILING_MS ??
+      process.env.WORKER_TWAP_WINDOW_MS ??
+      String(30 * 60 * 1000),
+    10,
+  );
+  if (intervalMs < scraperInterval && freshness < scraperInterval) {
+    console.warn(
+      `[startup] WARN: worker window may be narrower than scrape cadence; expect thin-data rows between scrapes ` +
+        `(WORKER_CYCLE_INTERVAL_MS=${intervalMs}, SCRAPER_CYCLE_INTERVAL_MS=${scraperInterval}, ` +
+        `WORKER_FRESHNESS_CEILING_MS=${freshness})`,
+    );
+  }
+}
+
 let stopRequested = false;
 process.on("SIGINT", () => {
   console.log("\n[shutdown] SIGINT — finishing cycle, exiting");
@@ -51,6 +85,8 @@ async function safeCycle(): Promise<void> {
 }
 
 async function main(): Promise<void> {
+  checkConfig();
+
   if (runOnceFlag) {
     await safeCycle();
     return;

@@ -8,24 +8,43 @@ import { insertPeptideTwap, logOutliers } from "./persist";
 
 /**
  * Single TWAP cycle. For each is_active=true peptide:
- *   1. Pull successful supplier_observations from the last
- *      WORKER_TWAP_WINDOW_MS (default 5 min) where price_usd_per_mg is
- *      non-null and the peptide is active and the supplier is active.
- *   2. Reduce to "most recent successful observation per supplier" inside
- *      the window.
- *   3. Hand the reduced set to computeTwap() — it returns either a
- *      computed TWAP (with kept/dropped observations + max deviation) or
- *      a thin-data signal when fewer than 2 suppliers reported.
+ *   1. For each (peptide, supplier) pair where the supplier is active, take
+ *      the SINGLE most-recent successful observation with a non-null price,
+ *      regardless of when it occurred.
+ *   2. Drop any observation older than WORKER_FRESHNESS_CEILING_MS
+ *      (default 30 min) — that's the freshness ceiling. Beyond that point
+ *      the data is too stale to publish; we'd rather honestly write
+ *      twap_usd_per_mg=NULL than show last-week's prices.
+ *   3. Hand the surviving observations to computeTwap() — it returns
+ *      either a computed TWAP or a thin-data signal when fewer than 2
+ *      suppliers reported fresh enough.
  *   4. Persist a peptide_twaps row regardless of the outcome — thin-data
- *      cases write twap_usd_per_mg=NULL as an honest audit signal. Dropped
- *      outliers also write to outlier_log.
+ *      cases write twap_usd_per_mg=NULL as an honest audit signal.
  *
- * Idempotency: computed_at is rounded to the start of the current UTC minute,
- * and peptide_twaps has unique (peptide_id, computed_at). Re-running inside
- * the same minute is a no-op via upsert ignoreDuplicates.
+ * Why this design (Option B, decoupled from scrape cadence):
+ *
+ * The previous approach used a fixed 5-minute window. With the scraper
+ * running on a 10-minute cadence (free-tier ScrapingAnt budget), most
+ * worker cycles ran when no fresh observations existed in the 5-min
+ * window — so the worker wrote a wave of NULL TWAPs after each scrape
+ * cycle, and Lovable had to fall back to the last priced row.
+ *
+ * Decoupling: walk back per (peptide, supplier) to the latest observation
+ * we have, capped by a freshness ceiling. This makes the worker robust to
+ * any scraper cadence change and to short scraper outages — as long as
+ * each supplier has SOMETHING within the freshness window, the TWAP gets
+ * computed. The 30-minute default ceiling comfortably covers our 10-minute
+ * cadence (~3× headroom for one missed scrape cycle) without showing
+ * dangerously stale prices.
+ *
+ * Idempotency: computed_at is rounded to the start of the current UTC
+ * minute, and peptide_twaps has unique (peptide_id, computed_at).
+ * Re-running inside the same minute is a no-op via upsert
+ * ignoreDuplicates.
  */
 
-const DEFAULT_WINDOW_MS = 5 * 60 * 1000;
+/** 30 minutes — three scrape cycles at the current 10-min cadence. */
+const DEFAULT_FRESHNESS_CEILING_MS = 30 * 60 * 1000;
 
 export interface CycleSummary {
   peptidesProcessed: number;
@@ -40,8 +59,13 @@ export async function runOnce(): Promise<CycleSummary> {
   const startedAt = Date.now();
   const supabase = createAdminClient();
 
-  const windowMs = Number.parseInt(
-    process.env.WORKER_TWAP_WINDOW_MS ?? String(DEFAULT_WINDOW_MS),
+  // Freshness ceiling: maximum age of an observation we'll consider. Beyond
+  // this, the worker treats the supplier as silent. WORKER_TWAP_WINDOW_MS
+  // is read for back-compat with .env files that already set it.
+  const freshnessCeilingMs = Number.parseInt(
+    process.env.WORKER_FRESHNESS_CEILING_MS ??
+      process.env.WORKER_TWAP_WINDOW_MS ??
+      String(DEFAULT_FRESHNESS_CEILING_MS),
     10,
   );
 
@@ -58,8 +82,11 @@ export async function runOnce(): Promise<CycleSummary> {
       0,
     ),
   );
+  // window_end / window_start columns are kept for the audit trail. They
+  // describe the freshness ceiling, not the original 5-min sliding window.
   const windowEnd = computedAt;
-  const windowStart = new Date(computedAt.getTime() - windowMs);
+  const windowStart = new Date(computedAt.getTime() - freshnessCeilingMs);
+  const oldestAllowed = windowStart;
 
   const peptides = await loadActivePeptides(supabase);
 
@@ -72,8 +99,7 @@ export async function runOnce(): Promise<CycleSummary> {
     const observations = await loadLatestObservationsPerSupplier(
       supabase,
       peptide.id,
-      windowStart,
-      windowEnd,
+      oldestAllowed,
     );
 
     const result = computeTwap(observations);
@@ -148,20 +174,22 @@ async function loadActivePeptides(supabase: AdminClient): Promise<PeptideRow[]> 
 }
 
 /**
- * For one peptide and a [windowStart, windowEnd] interval, return at most
- * one TwapInput per supplier — the most recent successful observation
- * within the window with a non-null price.
+ * For one peptide, return at most one TwapInput per supplier — the most
+ * recent successful observation with a non-null price, capped at the
+ * freshness ceiling.
  *
- * We pull all candidate rows ordered by observed_at DESC and keep the
- * first per supplier client-side. With ~6 active suppliers × 5 obs/window
- * = ~30 rows per query, this is cheap and avoids needing a window
- * function in PostgREST.
+ * No upper-bound filter: we accept "now-ish" data even if it landed after
+ * the rounded computed_at minute. We pull all candidate rows ordered by
+ * observed_at DESC (single query) and keep the first per supplier
+ * client-side — equivalent to SQL `DISTINCT ON (supplier_id) ORDER BY
+ * observed_at DESC` but expressible in PostgREST without an RPC. With ~6
+ * active suppliers × ~30 minutes of obs = ~30 rows per query worst-case,
+ * this stays cheap.
  */
 async function loadLatestObservationsPerSupplier(
   supabase: AdminClient,
   peptideId: number,
-  windowStart: Date,
-  windowEnd: Date,
+  oldestAllowed: Date,
 ): Promise<TwapInput[]> {
   const { data, error } = await supabase
     .from("supplier_observations")
@@ -169,8 +197,7 @@ async function loadLatestObservationsPerSupplier(
     .eq("peptide_id", peptideId)
     .eq("scrape_success", true)
     .not("price_usd_per_mg", "is", null)
-    .gte("observed_at", windowStart.toISOString())
-    .lte("observed_at", windowEnd.toISOString())
+    .gte("observed_at", oldestAllowed.toISOString())
     .order("observed_at", { ascending: false });
 
   if (error) throw new Error(`loadLatestObservationsPerSupplier: ${error.message}`);
