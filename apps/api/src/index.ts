@@ -4,6 +4,12 @@ import cors from "cors";
 import { authRequired } from "./auth";
 import { corsOptions } from "./cors-config";
 import { balanceHandler } from "./routes/balance";
+import {
+  closePositionHandler,
+  getPositionHandler,
+  listPositionsHandler,
+  openPositionHandler,
+} from "./routes/positions";
 
 /**
  * PeptideFi API — Express server.
@@ -106,6 +112,10 @@ function buildApp(): express.Express {
   // fall through to the 404 handler instead of being challenged for
   // credentials they shouldn't even need.
   app.get("/balance", authRequired, balanceHandler);
+  app.post("/positions/open", authRequired, openPositionHandler);
+  app.post("/positions/:id/close", authRequired, closePositionHandler);
+  app.get("/positions", authRequired, listPositionsHandler);
+  app.get("/positions/:id", authRequired, getPositionHandler);
 
   // 404 for anything not matched above.
   app.use((_req, res) => {

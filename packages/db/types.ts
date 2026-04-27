@@ -557,29 +557,115 @@ export type Database = {
           },
         ]
       }
+      position_settlements: {
+        Row: {
+          current_value_points: number
+          id: number
+          peptide_twap_id: number
+          position_id: string
+          settled_at: string
+          twap_usd_per_mg: number
+          unrealized_pnl_points: number
+        }
+        Insert: {
+          current_value_points: number
+          id?: number
+          peptide_twap_id: number
+          position_id: string
+          settled_at?: string
+          twap_usd_per_mg: number
+          unrealized_pnl_points: number
+        }
+        Update: {
+          current_value_points?: number
+          id?: number
+          peptide_twap_id?: number
+          position_id?: string
+          settled_at?: string
+          twap_usd_per_mg?: number
+          unrealized_pnl_points?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "position_settlements_peptide_twap_id_fkey"
+            columns: ["peptide_twap_id"]
+            isOneToOne: false
+            referencedRelation: "peptide_twaps"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "position_settlements_position_id_fkey"
+            columns: ["position_id"]
+            isOneToOne: false
+            referencedRelation: "positions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       positions: {
         Row: {
-          amount: number
-          avg_entry_price_micro: number
+          closed_at: string | null
+          direction: Database["public"]["Enums"]["position_direction"]
+          entry_peptide_twap_id: number | null
+          entry_size_points: number
+          entry_twap_usd_per_mg: number
+          exit_peptide_twap_id: number | null
+          exit_twap_usd_per_mg: number | null
+          id: string
+          idempotency_key: string
+          opened_at: string
           peptide_id: number
-          updated_at: string
+          realized_pnl_points: number | null
+          status: Database["public"]["Enums"]["position_status"]
           user_id: string
         }
         Insert: {
-          amount: number
-          avg_entry_price_micro: number
+          closed_at?: string | null
+          direction: Database["public"]["Enums"]["position_direction"]
+          entry_peptide_twap_id?: number | null
+          entry_size_points: number
+          entry_twap_usd_per_mg: number
+          exit_peptide_twap_id?: number | null
+          exit_twap_usd_per_mg?: number | null
+          id?: string
+          idempotency_key: string
+          opened_at?: string
           peptide_id: number
-          updated_at?: string
+          realized_pnl_points?: number | null
+          status?: Database["public"]["Enums"]["position_status"]
           user_id: string
         }
         Update: {
-          amount?: number
-          avg_entry_price_micro?: number
+          closed_at?: string | null
+          direction?: Database["public"]["Enums"]["position_direction"]
+          entry_peptide_twap_id?: number | null
+          entry_size_points?: number
+          entry_twap_usd_per_mg?: number
+          exit_peptide_twap_id?: number | null
+          exit_twap_usd_per_mg?: number | null
+          id?: string
+          idempotency_key?: string
+          opened_at?: string
           peptide_id?: number
-          updated_at?: string
+          realized_pnl_points?: number | null
+          status?: Database["public"]["Enums"]["position_status"]
           user_id?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "positions_entry_peptide_twap_id_fkey"
+            columns: ["entry_peptide_twap_id"]
+            isOneToOne: false
+            referencedRelation: "peptide_twaps"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "positions_exit_peptide_twap_id_fkey"
+            columns: ["exit_peptide_twap_id"]
+            isOneToOne: false
+            referencedRelation: "peptide_twaps"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "positions_peptide_id_fkey"
             columns: ["peptide_id"]
@@ -1131,7 +1217,27 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      close_position: {
+        Args: {
+          p_exit_peptide_twap_id: number
+          p_exit_twap: number
+          p_position_id: string
+          p_user_id: string
+        }
+        Returns: Json
+      }
+      open_position: {
+        Args: {
+          p_direction: Database["public"]["Enums"]["position_direction"]
+          p_entry_peptide_twap_id: number
+          p_entry_twap: number
+          p_idempotency_key: string
+          p_peptide_id: number
+          p_size_points: number
+          p_user_id: string
+        }
+        Returns: Json
+      }
     }
     Enums: {
       availability_tier:
@@ -1148,6 +1254,8 @@ export type Database = {
         | "listing_added"
         | "listing_removed"
       peptide_status: "active" | "paused" | "delisted"
+      position_direction: "long" | "short"
+      position_status: "open" | "closed"
       prediction_market_state:
         | "pending"
         | "open"
@@ -1301,6 +1409,8 @@ export const Constants = {
         "listing_removed",
       ],
       peptide_status: ["active", "paused", "delisted"],
+      position_direction: ["long", "short"],
+      position_status: ["open", "closed"],
       prediction_market_state: [
         "pending",
         "open",
