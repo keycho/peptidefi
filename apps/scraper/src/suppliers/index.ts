@@ -1,6 +1,7 @@
 import type { ScrapeResult } from "@peptidefi/shared";
 import type { Browser } from "playwright";
 import { cayman } from "./cayman";
+import { createWooModule } from "./woocommerce";
 
 /**
  * Per-supplier scraper module contract.
@@ -28,14 +29,34 @@ export interface SupplierModule {
 }
 
 /**
- * Real per-supplier modules land in Step 3 of the build — one at a time
- * (Cayman → Sigma → Bachem). Until then, every code falls through to the
- * not-implemented stub below, which writes a clean failure row to
- * supplier_observations so the rest of the pipeline (run rows, FX fetch,
- * persist path) is exercised end-to-end from day one.
+ * Active supplier modules.
+ *
+ *   Tier 1 (live): six WooCommerce vendors backed by the shared module.
+ *     The factory wires per-vendor host config; the catalog fetch + parse
+ *     code lives in woocommerce.ts and is identical across the six.
+ *
+ *   Tier 2 (deferred): LIMITLESS (BigCommerce HTML scrape) and PARTICLE
+ *     (PrestaShop HTML scrape). Will land as a separate commit after the
+ *     Tier-1 soak passes.
+ *
+ *   Paused: BACHEM and SIGMA (anti-bot blocks from datacenter IPs; need
+ *     residential proxy or Cloudflare bypass). CAYMAN (different market
+ *     tier — research-grade vs consumer; tracked separately as future
+ *     reference price feature).
+ *
+ * Codes that don't match a registered module fall through to the
+ * stubModule below, which writes a clean failure row so the audit trail
+ * still records the attempt (per spec: every cycle writes a row per
+ * supplier_product, success or fail).
  */
 export const SUPPLIERS: Partial<Record<string, SupplierModule>> = {
-  CAYMAN: cayman,
+  CAYMAN: cayman, // status='paused', so the runner won't dispatch to it; kept registered for clarity
+  PUREHEALTH: createWooModule({ supplierCode: "PUREHEALTH", host: "purehealthpeptides.com" }),
+  NUSCIENCE:  createWooModule({ supplierCode: "NUSCIENCE",  host: "nusciencepeptides.com" }),
+  VERIFIED:   createWooModule({ supplierCode: "VERIFIED",   host: "verifiedpeptides.com" }),
+  LIBERTY:    createWooModule({ supplierCode: "LIBERTY",    host: "libertypeptides.com" }),
+  GENETIC:    createWooModule({ supplierCode: "GENETIC",    host: "geneticpeptide.com" }),
+  PULSE:      createWooModule({ supplierCode: "PULSE",      host: "pulsepeptides.com" }),
 };
 
 const stubModule: SupplierModule = {

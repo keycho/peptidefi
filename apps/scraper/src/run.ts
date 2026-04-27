@@ -161,11 +161,17 @@ export async function runOnce(): Promise<CycleSummary> {
 }
 
 async function loadActiveProducts(supabase: AdminClient): Promise<ProductRow[]> {
+  // Three-way active filter:
+  //   - supplier_products.active            (this row is in the active set)
+  //   - suppliers.status='active'           (the supplier itself is enabled)
+  //   - peptides.is_active=true             (the peptide is in the live TWAP set)
+  // Cayman is paused via suppliers.status; NAD is gated via peptides.is_active.
   const { data, error } = await supabase
     .from("supplier_products")
     .select(
       `id, supplier_id, peptide_id, supplier_sku, product_url, product_name, mass_per_unit_mg,
-       suppliers!inner(code)`,
+       suppliers!inner(code, status),
+       peptides!inner(code, is_active)`,
     )
     .eq("active", true);
 
@@ -173,6 +179,8 @@ async function loadActiveProducts(supabase: AdminClient): Promise<ProductRow[]> 
 
   const rows: ProductRow[] = [];
   for (const r of data ?? []) {
+    if (r.suppliers.status !== "active") continue;
+    if (!r.peptides.is_active) continue;
     if (
       r.supplier_sku.startsWith("TODO_") ||
       r.product_url.startsWith("TODO_")

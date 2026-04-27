@@ -421,6 +421,7 @@ export type Database = {
           display_name: string
           full_name: string
           id: number
+          is_active: boolean
           status: Database["public"]["Enums"]["peptide_status"]
           updated_at: string
         }
@@ -431,6 +432,7 @@ export type Database = {
           display_name: string
           full_name: string
           id?: number
+          is_active?: boolean
           status?: Database["public"]["Enums"]["peptide_status"]
           updated_at?: string
         }
@@ -441,6 +443,7 @@ export type Database = {
           display_name?: string
           full_name?: string
           id?: number
+          is_active?: boolean
           status?: Database["public"]["Enums"]["peptide_status"]
           updated_at?: string
         }
