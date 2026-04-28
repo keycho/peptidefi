@@ -15,6 +15,7 @@ import {
   getProfileHandler,
   updateDisplayNameHandler,
 } from "./routes/profile";
+import { vendorLeaderboardHandler } from "./routes/vendors";
 
 /**
  * PeptideFi API — Express server.
@@ -115,6 +116,7 @@ function buildApp(): express.Express {
 
   // Public routes (no auth).
   app.get("/leaderboard", leaderboardHandler);
+  app.get("/vendors/leaderboard", vendorLeaderboardHandler);
 
   // Protected routes — authRequired applied per route, so unknown paths
   // fall through to the 404 handler instead of being challenged for
