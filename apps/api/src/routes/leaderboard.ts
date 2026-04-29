@@ -33,8 +33,11 @@ interface LeaderboardRow {
   realized_pnl: string | number;
   unrealized_pnl: string | number;
   total_equity: string | number;
+  net_pnl: string | number;
   open_positions_count: number;
   total_trades: number;
+  total_bets: number;
+  open_bets_count: number;
   last_active_at: string;
 }
 
@@ -47,8 +50,11 @@ function shapeRow(row: LeaderboardRow): Record<string, unknown> {
     realized_pnl: numericString(row.realized_pnl),
     unrealized_pnl: numericString(row.unrealized_pnl),
     total_equity: numericString(row.total_equity),
+    net_pnl: numericString(row.net_pnl),
     open_positions_count: row.open_positions_count,
     total_trades: row.total_trades,
+    total_bets: row.total_bets,
+    open_bets_count: row.open_bets_count,
     last_active_at: row.last_active_at,
   };
 }
