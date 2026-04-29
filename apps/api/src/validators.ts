@@ -60,3 +60,23 @@ export const leaderboardQuerySchema = z.object({
 export const arbitrageQuerySchema = z.object({
   min_spread_pct: z.coerce.number().finite().min(0).optional(),
 });
+
+/** POST /predictions/:slug/bet body. */
+export const placeBetSchema = z.object({
+  side: z.enum(["yes", "no"]),
+  stake_points: z.union([z.number().finite().positive(), z.string().regex(/^\d+(\.\d+)?$/)]),
+  idempotency_key: z.string().min(8).max(128),
+});
+export type PlaceBetInput = z.infer<typeof placeBetSchema>;
+
+/** POST /admin/predictions/:slug/resolve body. */
+export const resolveMarketSchema = z.object({
+  outcome: z.enum(["yes", "no", "void"]),
+  notes: z.string().max(1000).optional(),
+});
+export type ResolveMarketInput = z.infer<typeof resolveMarketSchema>;
+
+/** Optional ?include_user=<uuid> on GET /predictions/:slug. */
+export const predictionDetailQuerySchema = z.object({
+  include_user: z.string().uuid().optional(),
+});

@@ -81,4 +81,45 @@ export const errors = {
       `${reason}. Retry after ${retryAfterSeconds}s`,
       { retry_after_seconds: retryAfterSeconds, ...(extra ?? {}) });
   },
+  notAuthorized(res: Response, message = "admin access required") {
+    sendError(res, 403, "NOT_AUTHORIZED", message);
+  },
+  marketNotFound(res: Response, slug?: string) {
+    sendError(res, 404, "MARKET_NOT_FOUND",
+      slug ? `No market with slug "${slug}"` : "No such market",
+      slug ? { slug } : undefined);
+  },
+  marketNotOpen(res: Response, currentStatus: string) {
+    sendError(res, 409, "MARKET_NOT_OPEN",
+      `Market status is "${currentStatus}"; bets only accepted while open`,
+      { status: currentStatus });
+  },
+  marketClosed(res: Response) {
+    sendError(res, 409, "MARKET_CLOSED",
+      "Market closes_at has passed; betting locked");
+  },
+  marketNotResolvable(res: Response, currentStatus: string) {
+    sendError(res, 409, "MARKET_NOT_RESOLVABLE",
+      `Market status is "${currentStatus}"; only open or closed markets can be resolved`,
+      { status: currentStatus });
+  },
+  belowMinBet(res: Response, minBet: string) {
+    sendError(res, 400, "BELOW_MIN_BET",
+      `Stake is below the market's minimum bet of ${minBet}`,
+      { min_bet_points: minBet });
+  },
+  exceedsUserLimit(res: Response, maxBet: string) {
+    sendError(res, 400, "EXCEEDS_USER_LIMIT",
+      `Stake plus existing-open bets exceeds the per-user cap of ${maxBet}`,
+      { max_bet_points_per_user: maxBet });
+  },
+  invalidOutcome(res: Response, value: unknown) {
+    sendError(res, 400, "INVALID_OUTCOME",
+      "outcome must be one of 'yes', 'no', 'void'",
+      { received: value });
+  },
+  idempotencyKeyReusedDifferentParams(res: Response) {
+    sendError(res, 409, "IDEMPOTENCY_KEY_REUSED_DIFFERENT_PARAMS",
+      "Idempotency key was previously used with different parameters");
+  },
 };

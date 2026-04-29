@@ -1,5 +1,6 @@
 import "dotenv/config";
 import {
+  createAdminClient,
   type HealthState,
   sleepInterruptible,
   startHealthServer,
@@ -97,6 +98,44 @@ function fmtSummary(s: Awaited<ReturnType<typeof runOnce>>): string {
   ].join(" ");
 }
 
+/**
+ * Predictions auto-flagger. Calls public.flag_markets_ready_for_resolution()
+ * which closes any market past its closes_at and (for 'auto' markets) drops
+ * a suggestion row for admin review. Never resolves on its own.
+ *
+ * Cadence: at most once every PREDICTIONS_FLAG_INTERVAL_MS (default 30 min);
+ * the per-cycle gate uses a timestamp so it doesn't matter how often the
+ * TWAP loop ticks underneath.
+ */
+const flagIntervalMs = Number.parseInt(
+  process.env.PREDICTIONS_FLAG_INTERVAL_MS ?? String(30 * 60 * 1000),
+  10,
+);
+let lastFlagAt = 0;
+
+async function maybeFlagPredictions(): Promise<void> {
+  const now = Date.now();
+  if (now - lastFlagAt < flagIntervalMs) return;
+  lastFlagAt = now;
+  try {
+    const supabase = createAdminClient() as unknown as {
+      rpc: (name: string) => Promise<{ data: unknown; error: { message: string } | null }>;
+    };
+    const { data, error } = await supabase.rpc("flag_markets_ready_for_resolution");
+    if (error) {
+      console.error(`[predictions-flag] FAILED ${error.message}`);
+      return;
+    }
+    const flagged = (data as { flagged_count?: number } | null)?.flagged_count ?? 0;
+    if (flagged > 0) {
+      console.log(`[predictions-flag] flagged_count=${flagged}`);
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[predictions-flag] FAILED ${msg}`);
+  }
+}
+
 async function safeCycle(): Promise<void> {
   health.last_cycle_started_at = new Date().toISOString();
   try {
@@ -144,6 +183,9 @@ async function main(): Promise<void> {
     );
     while (!stopRequested) {
       await safeCycle();
+      // Predictions cron piggy-backs on the worker loop. Self-rate-limited
+      // to flagIntervalMs so it doesn't fire on every TWAP cycle.
+      await maybeFlagPredictions();
       if (stopRequested) break;
       await sleepInterruptible(intervalMs, shutdownAbort.signal);
     }

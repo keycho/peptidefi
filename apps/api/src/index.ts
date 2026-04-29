@@ -17,6 +17,13 @@ import {
 } from "./routes/profile";
 import { vendorLeaderboardHandler } from "./routes/vendors";
 import { arbitrageHandler } from "./routes/arbitrage";
+import {
+  getPredictionHandler,
+  listMyBetsHandler,
+  listPredictionsHandler,
+  placeBetHandler,
+  resolveMarketHandler,
+} from "./routes/predictions";
 
 /**
  * PeptideFi API — Express server.
@@ -119,6 +126,12 @@ function buildApp(): express.Express {
   app.get("/leaderboard", leaderboardHandler);
   app.get("/vendors/leaderboard", vendorLeaderboardHandler);
   app.get("/arbitrage", arbitrageHandler);
+  app.get("/predictions", listPredictionsHandler);
+  // /predictions/me MUST be registered before /predictions/:slug so the
+  // literal route wins. Express matches in order; without this, "me"
+  // would be captured as a slug and getPredictionHandler would 404.
+  app.get("/predictions/me", authRequired, listMyBetsHandler);
+  app.get("/predictions/:slug", getPredictionHandler);
 
   // Protected routes — authRequired applied per route, so unknown paths
   // fall through to the 404 handler instead of being challenged for
@@ -130,6 +143,8 @@ function buildApp(): express.Express {
   app.get("/positions/:id", authRequired, getPositionHandler);
   app.get("/profile", authRequired, getProfileHandler);
   app.patch("/profile/display-name", authRequired, updateDisplayNameHandler);
+  app.post("/predictions/:slug/bet", authRequired, placeBetHandler);
+  app.post("/admin/predictions/:slug/resolve", authRequired, resolveMarketHandler);
 
   // 404 for anything not matched above.
   app.use((_req, res) => {
