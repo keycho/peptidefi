@@ -112,6 +112,8 @@ function buildApp(): express.Express {
           "http://localhost:5173",
           "http://127.0.0.1:3000",
           "http://127.0.0.1:5173",
+          "https://biohack.market",
+          "https://www.biohack.market",
         ],
         env_extra_count: (process.env.CORS_ORIGINS ?? "")
           .split(",")
