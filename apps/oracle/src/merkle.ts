@@ -110,7 +110,7 @@ export function buildMerkleTree(observations: Observation[]): MerkleTree {
 
   if (leaves.length === 1) {
     // Single-leaf tree: root == leaf hash, no inner nodes.
-    return { root: leaves[0], leaves, levels: [leaves] };
+    return { root: leaves[0]!, leaves, levels: [leaves] };
   }
 
   const levels: Buffer[][] = [leaves];
@@ -118,15 +118,15 @@ export function buildMerkleTree(observations: Observation[]): MerkleTree {
   while (current.length > 1) {
     const next: Buffer[] = [];
     for (let i = 0; i < current.length; i += 2) {
-      const left = current[i];
+      const left = current[i]!;
       // Bitcoin-style odd-node duplication: pair last with itself.
-      const right = i + 1 < current.length ? current[i + 1] : current[i];
+      const right = i + 1 < current.length ? current[i + 1]! : current[i]!;
       next.push(innerHash(left, right));
     }
     levels.push(next);
     current = next;
   }
-  return { root: current[0], leaves, levels };
+  return { root: current[0]!, leaves, levels };
 }
 
 /**

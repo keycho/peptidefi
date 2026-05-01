@@ -42,6 +42,12 @@ const envSchema = z.object({
   ORACLE_RPC_URL: z.string().url("ORACLE_RPC_URL must be a valid URL"),
   SUPABASE_URL: z.string().url("SUPABASE_URL must be a valid URL"),
   SUPABASE_SECRET_KEY: z.string().min(1, "SUPABASE_SECRET_KEY is required"),
+  ORACLE_DATABASE_URL: z
+    .string()
+    .regex(
+      /^postgres(?:ql)?:\/\//,
+      "ORACLE_DATABASE_URL must be a postgres:// URL",
+    ),
 
   // Optional with defaults
   HEALTH_PORT: z.coerce.number().int().positive().default(8080),
@@ -78,6 +84,7 @@ export interface OracleConfig {
 
   supabaseUrl: string;
   supabaseSecretKey: string;
+  databaseUrl: string;
 
   healthPort: number;
 
@@ -177,6 +184,7 @@ export function loadConfig(): OracleConfig {
 
     supabaseUrl: env.SUPABASE_URL,
     supabaseSecretKey: env.SUPABASE_SECRET_KEY,
+    databaseUrl: env.ORACLE_DATABASE_URL,
 
     healthPort: env.HEALTH_PORT,
 

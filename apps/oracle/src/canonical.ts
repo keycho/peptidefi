@@ -87,7 +87,7 @@ export function canonicalObservationJson(obs: Observation): string {
         `canonical: observation is missing required field "${field}"`,
       );
     }
-    const value = (obs as Record<string, unknown>)[field];
+    const value = (obs as unknown as Record<string, unknown>)[field];
     if (value === undefined) {
       throw new Error(
         `canonical: observation field "${field}" is undefined; ` +
