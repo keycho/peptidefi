@@ -332,7 +332,7 @@ that ceiling, daily cost stays under 0.01 SOL — see §7.
 
 ### 3.4.5 Confirmation commitment level
 
-**Decision: `confirmed`.**
+**Decision: `finalized`.**
 
 Three options on Solana:
 
@@ -340,15 +340,20 @@ Three options on Solana:
 | ----------- | -------------------------------------- | --------------- | ------------------- |
 | `processed` | latest cluster state                   | < 1s            | high (may roll back)|
 | `confirmed` | voted on by 2/3 of validators          | ~3–5s           | very low            |
-| `finalized` | 31+ blocks deep                        | ~13s            | none                |
+| `finalized` | 31+ blocks deep                        | ~13s            | none (cryptoeconomic finality) |
 
-`confirmed` is the standard choice for oracle-style anchoring:
-strong guarantee (~1-in-millions reorg risk in practice) without
-the latency tax of `finalized`. Anchored data we can always
-re-query on the next read; re-orgs that affect a `confirmed` slot
-are rare enough that operational policy can handle them via the
-audit trail (§3.7.6) rather than by waiting `finalized` on every
-write.
+For an oracle service whose value proposition is cryptographic
+integrity, the trade-off favors zero reorg risk over marginal
+latency. The 8–10s additional latency vs. `confirmed` is negligible
+relative to the 30-second polling cadence (§3.2.1) and the
+10-minute upstream cycle cadence — at finality our commits land
+well before the next cycle even starts. Anchoring against
+`finalized` slots means a verifier who fetches the on-chain Memo
+later **never** has to worry about the slot having been re-orged
+out from under them.
+
+The latency budget for confirmation polling (§3.4.6) is sized to
+accommodate finalization comfortably even under congestion.
 
 ### 3.4.6 Confirmation polling
 
@@ -357,19 +362,25 @@ subscription. We use HTTP polling instead — simpler, more robust
 across reconnects, easier to bound:
 
 ```
-while not_confirmed and (now - submit_time) < CONFIRMATION_TIMEOUT:
+while not_finalized and (now - submit_time) < CONFIRMATION_TIMEOUT:
     sleep(CONFIRMATION_POLL_INTERVAL)
     status = getSignatureStatuses([signature])
-    if status.confirmationStatus == 'confirmed' or 'finalized':
+    if status.confirmationStatus == 'finalized':
         return Confirmed(slot=status.slot)
     if status.err != null:
         return Failed(error=status.err)
 return Timeout
 ```
 
-Defaults: `CONFIRMATION_TIMEOUT = 60s`, `CONFIRMATION_POLL_INTERVAL = 3s`.
-A 60s budget covers the worst case for a `confirmed` commitment
-even under congestion.
+Defaults: `CONFIRMATION_TIMEOUT = 90s`, `CONFIRMATION_POLL_INTERVAL = 3s`.
+A 90s budget covers `finalized` comfortably even under congestion —
+typical latency is ~13s, observed worst case during heavy load is
+~30–45s. The `'confirmed'` short-circuit return is intentionally
+omitted; we wait for full finality before transitioning the row's
+`status` column to `confirmed` in the DB. (The DB enum value
+`'confirmed'` is reused here to mean "finality reached on-chain";
+it's a bit of a name collision but renaming it would churn §01 +
+§02 cross-references for no semantic gain.)
 
 ## 3.5 Keypair management
 
@@ -393,14 +404,40 @@ by:
 
 - The committer's wallet is **dedicated to this service only** —
   not a personal wallet, not used for anything else
-- Funded with **minimal SOL** (recommend 0.5 SOL initial; refill
-  manually when balance drops)
 - **Single-purpose** — only ever signs Memo program txs to a known
   program ID; an attacker stealing the key can drain SOL but not
   much else
 - A Railway secret is no different from a database password from
   an attack-surface standpoint, and we already accept that exposure
   for `SUPABASE_SECRET_KEY`
+
+**Operational requirements (normative for v1 deployment):**
+
+The env-var storage choice is acceptable only when all three of
+the following hold. If any one is not true, escalate to a stronger
+storage mechanism (KMS or hardware signer) before going to mainnet.
+
+1. **Restricted Railway access.** Project-level Railway access is
+   limited to trusted operators. Adding a teammate to the Railway
+   project is treated as the same trust action as handing them the
+   private key directly. Audit the access list before launch and
+   on any team change.
+2. **Marked as a secret in Railway.** The `ORACLE_SOLANA_PRIVATE_KEY`
+   variable is set with Railway's "secret" toggle enabled — masks
+   the value in the dashboard, excludes it from logs and from any
+   redeploy diff. Confirm this in the Railway UI immediately after
+   the variable is first set.
+3. **Minimal SOL, ~30-day buffer, manually refilled.** Initial fund
+   is sized for ~30 days of expected commit cost (current §7
+   projection: ~0.4 SOL covers 30 days of cycle + TWAP commits at
+   the dynamic-fee cap with comfortable headroom). Refills happen
+   manually based on the §3.5.3 balance alerts. Never auto-refill
+   from a larger reserve wallet — that would expose the larger
+   wallet to whatever compromise scenario takes the hot wallet.
+
+The combined effect: a worst-case key compromise drains ≤ 30 days
+of operating cost, gives the attacker no other capability (Memo
+txs only), and is detectable within minutes via the balance alarms.
 
 ### 3.5.2 Loading
 
@@ -549,7 +586,7 @@ deciding the retry path:
 | `BLOCKHASH_EXPIRED`         | "BlockhashNotFound" from validator                | refresh blockhash, immediate retry (no count increment) |
 | `INSUFFICIENT_SOL`          | hot wallet balance can't cover fee                | NO retry — immediate `failed` + critical alert         |
 | `INVALID_TRANSACTION`       | malformed tx, signature verification failure      | NO retry — immediate `failed` + page operator         |
-| `CONFIRMATION_TIMEOUT`      | tx submitted but not confirmed within 60s        | reconcile (see §3.7.4); may transition to `confirmed`   |
+| `CONFIRMATION_TIMEOUT`      | tx submitted but not finalized within 90s        | reconcile (see §3.7.4); may transition to `confirmed`   |
 | `SIGNATURE_ALREADY_EXISTS`  | duplicate submission detected                     | reconcile (see §3.7.5)                                  |
 
 The committer logs the original error, its classification, and
@@ -571,7 +608,7 @@ failed rows and re-attempts.
 
 ### 3.7.4 Confirmation timeout reconciliation
 
-A tx that doesn't confirm within 60s could be:
+A tx that doesn't finalize within 90s could be:
 
 (a) Dropped by the cluster (never landed)
 (b) Confirmed but our polling missed it
@@ -590,7 +627,7 @@ the audit trail). Reconciliation:
      transition status back to 'pending', clear signature
      retry per §3.7.1 (with fresh blockhash)
 4. If not found AND the blockhash is still valid:
-     wait one more 60s window, retry from step 1
+     wait one more 90s window, retry from step 1
 ```
 
 This avoids the "we resubmitted but the original landed too" double-commit hazard.
@@ -636,19 +673,20 @@ Idempotency at the DB layer makes this safe:
 - `twap_commits` has `unique(peptide_code, computed_at)`, same
   property
 
-### 3.7.6 Re-orgs (operational, not coded for in v1)
+### 3.7.6 Re-orgs (not a concern at our commitment level)
 
-A `confirmed` slot can in principle be re-orged out, especially in
-adversarial network conditions. We don't add re-org detection to
-v1 — the practical risk is sub-1-in-a-million per commit and the
-audit trail (memo on chain + signature in DB) is sufficient for
-post-hoc reconciliation if it ever happens.
+Per §3.4.5, every commit waits for `finalized` before transitioning
+to `confirmed` in the database. By the time we record the slot,
+that slot is 31+ blocks deep and has cryptoeconomic finality —
+re-orgs at this depth would require a violation of Solana's safety
+guarantees, which has never occurred on mainnet. We do not need
+re-org detection or recovery logic in v1.
 
-If a re-org takes out a slot we anchored against, manual procedure:
-the slot disappearing from the validator is detectable via
-`getSignatureStatuses` returning `null` after previously returning
-`confirmed`. Operator marks the affected row as `failed` with
-`last_error = 're-orged'` and the retry job re-anchors.
+For completeness: if a finalized slot were ever re-orged out (a
+network-level catastrophe well beyond v1 scope), the audit trail
+of memo + signature + slot in `commit_cycles` is sufficient evidence
+for an operator-led recovery. The committer service itself takes
+no action on this scenario.
 
 ### 3.7.7 Long-tail retry job
 
@@ -738,10 +776,40 @@ JSON-structured logs make grepping in Railway's log view tolerable;
 the project has been using plain key=value pairs elsewhere so we
 match that.
 
-### 3.9.2 Metrics
+### 3.9.2 /health endpoint contents
 
-Exposed via `/health` for v1 (no Prometheus endpoint yet — adding
-one is a §8 follow-up):
+Exposed at `GET /health` on `HEALTH_PORT` (default 8080). v1 has
+no separate Prometheus endpoint — adding one is a §8 follow-up.
+
+**Required fields (normative).** Every field below MUST be present
+on every response. Adding extra fields is fine; removing or
+renaming any of these is a breaking change to the operational
+contract that monitoring will rely on.
+
+| field                              | type           | meaning                                                      |
+| ---------------------------------- | -------------- | ------------------------------------------------------------ |
+| `service`                          | string         | Always `"oracle"`. Lets a generic monitor distinguish services. |
+| `ok`                               | boolean        | Aggregate health flag. Drives the HTTP status code.          |
+| `uptime_seconds`                   | integer        | Process uptime; useful to spot crash loops.                  |
+| `wallet.public_key`                | string         | Hot wallet public key (base58). Verifiable against Solana.   |
+| `wallet.balance_sol`               | string         | Decimal string. Current SOL balance — **required**.          |
+| `wallet.balance_low`               | boolean        | True when balance < `ORACLE_BALANCE_WARN_SOL`.               |
+| `wallet.balance_critical`          | boolean        | True when balance < `ORACLE_BALANCE_CRITICAL_SOL`.           |
+| `cycle.last_commit_at`             | ISO 8601 \| null | Timestamp of last successful cycle commit — **required**.  |
+| `cycle.last_committed_cycle_id`    | integer \| null | The `cycle_id` of that commit; null until first success.    |
+| `cycle.in_flight_count`            | integer        | Pending + submitted cycle commits — **required**.            |
+| `cycle.failed_count_24h`           | integer        | Failed cycle commits in last 24h — **required**.             |
+| `twap.last_commit_at`              | ISO 8601 \| null | Timestamp of last successful TWAP commit — **required**.   |
+| `twap.last_hour_committed_count`   | integer        | TWAP commits that succeeded in the most recent hourly batch. |
+| `twap.last_hour_skipped_count`     | integer        | TWAP commits that were skipped (NULL TWAP, etc.) in that batch. |
+| `twap.in_flight_count`             | integer        | Pending + submitted TWAP commits — **required**.             |
+| `twap.failed_count_24h`            | integer        | Failed TWAP commits in last 24h — **required**.              |
+| `rpc.primary`                      | string         | Identifier of the primary RPC ("helius" / "quicknode" / etc.). |
+| `rpc.last_error_at`                | ISO 8601 \| null | Most recent RPC error timestamp; null if none.             |
+| `rpc.last_error_class`             | string \| null  | Error class from §3.7.2; null if none.                      |
+| `rpc.blockhash_age_seconds`        | integer        | Age of the cached blockhash; debugging aid.                  |
+
+**Example response (healthy):**
 
 ```json
 {
@@ -755,15 +823,15 @@ one is a §8 follow-up):
     "balance_critical": false
   },
   "cycle": {
-    "last_committed_cycle_id": 1042,
     "last_commit_at": "2026-05-01T12:34:56.789Z",
+    "last_committed_cycle_id": 1042,
     "in_flight_count": 0,
     "failed_count_24h": 0
   },
   "twap": {
+    "last_commit_at": "2026-05-01T12:00:30.123Z",
     "last_hour_committed_count": 26,
     "last_hour_skipped_count": 0,
-    "last_commit_at": "2026-05-01T12:00:30.123Z",
     "in_flight_count": 0,
     "failed_count_24h": 0
   },
@@ -776,10 +844,27 @@ one is a §8 follow-up):
 }
 ```
 
-Healthy iff `balance_critical=false` AND `cycle.last_commit_at`
-is within the last 30 minutes (configurable). The HTTP status is
-`200` when healthy, `503` otherwise — Railway's healthcheck flips
-the service's status pill.
+**Health rule.** `ok` is `true` AND HTTP status is `200` iff **all
+of the following** hold:
+
+- `wallet.balance_critical` is `false`
+- `cycle.last_commit_at` is within the last 30 minutes (configurable
+  via `ORACLE_HEALTH_STALE_THRESHOLD_MS`)
+- `twap.last_commit_at` is within the last 90 minutes
+  (TWAP cadence is hourly + skew + buffer; allows one missed slot
+  before degrading)
+- `cycle.failed_count_24h` < 5
+- `twap.failed_count_24h` < 5
+
+Otherwise `ok` is `false` and HTTP status is `503` — Railway's
+healthcheck flips the service's status pill, and external monitors
+(§3.9.3) page based on the same signal.
+
+The first-boot edge case where `cycle.last_commit_at` and
+`twap.last_commit_at` are `null`: the staleness check skips them
+during a configurable warm-up window (default 60 minutes after
+`uptime_seconds=0`) so a fresh deploy isn't immediately reported
+unhealthy.
 
 ### 3.9.3 Alerts
 
@@ -798,27 +883,27 @@ whatever — out of scope here). The signals to alert on:
 
 ## 3.10 Decisions to flag for review
 
-These are pre-decided in this document but worth your explicit
-confirmation before implementation starts:
+Decisions in this section that have been **explicitly confirmed**
+during review:
 
-1. **RPC provider: Helius (free tier).** Justified in §3.6.1.
-   Alternative: QuickNode for the backup slot if you have an
-   account, otherwise leave unconfigured.
-2. **Polling cadences: 30s for cycles, 60s aligned for TWAPs.**
-   Easy to tune via env var; chosen as the simplest intervals
-   that stay well under the 10-minute cycle cadence and don't
-   churn the RPC.
-3. **Confirmation level: `confirmed`.** Justified in §3.4.5.
-   `finalized` is the safer alternative if we later decide reorg
-   risk is unacceptable; trade-off is ~10× higher latency.
-4. **Priority fee strategy: dynamic via Helius's API, capped at
-   50,000 micro-lamports/CU.** Justified in §3.4.4. Simpler
-   alternative: static 5,000 micro-lamports/CU, which works during
-   calm but risks dropping during congestion.
-5. **Keypair storage: Railway env var.** Justified in §3.5.1.
-   Trade-offs documented; stronger options (KMS) deferred to a
-   future hardening pass if the wallet ever holds non-trivial
-   value.
+- **RPC provider: Helius (free tier).** Confirmed.
+- **Polling cadences: 30s for cycles, 60s aligned for TWAPs.**
+  Confirmed.
+- **Confirmation level: `finalized`.** Confirmed (§3.4.5 was flipped
+  from `confirmed` during review). Eliminates re-org risk entirely
+  at the cost of ~8–10s additional latency, which is negligible
+  relative to the 30-second polling cadence.
+- **Priority fee strategy: dynamic via Helius's API, capped at
+  50,000 micro-lamports/CU.** Confirmed.
+- **Keypair storage: Railway env var.** Confirmed for v1, subject
+  to the three operational requirements added to §3.5.1 during
+  review (restricted Railway access, secret-flagged variable,
+  ~30-day SOL buffer with manual refills only).
+- **/health endpoint contents.** Confirmed; required-field table
+  in §3.9.2 is normative.
+
+No decisions remain open at the section-3 level. Open questions
+that touch this section but are resolved elsewhere live in §9.
 
 ## 3.11 Out of scope for this section
 
