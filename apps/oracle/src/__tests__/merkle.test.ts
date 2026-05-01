@@ -62,10 +62,10 @@ describe("buildMerkleTree", () => {
     // Shuffled input
     const tree = buildMerkleTree([SPEC_OBS_4, SPEC_OBS_2, SPEC_OBS_3, SPEC_OBS_1]);
     expect(bytesToHex0x(tree.root)).toBe(SPEC_ROOT);
-    expect(bytesToHex0x(tree.leaves[0])).toBe(SPEC_LEAF_HASHES.L1);
-    expect(bytesToHex0x(tree.leaves[1])).toBe(SPEC_LEAF_HASHES.L2);
-    expect(bytesToHex0x(tree.leaves[2])).toBe(SPEC_LEAF_HASHES.L3);
-    expect(bytesToHex0x(tree.leaves[3])).toBe(SPEC_LEAF_HASHES.L4);
+    expect(bytesToHex0x(tree.leaves[0]!)).toBe(SPEC_LEAF_HASHES.L1);
+    expect(bytesToHex0x(tree.leaves[1]!)).toBe(SPEC_LEAF_HASHES.L2);
+    expect(bytesToHex0x(tree.leaves[2]!)).toBe(SPEC_LEAF_HASHES.L3);
+    expect(bytesToHex0x(tree.leaves[3]!)).toBe(SPEC_LEAF_HASHES.L4);
   });
 
   it("exposes per-level hashes for proof generation", () => {
@@ -74,9 +74,9 @@ describe("buildMerkleTree", () => {
     expect(tree.levels[0]).toHaveLength(4);
     expect(tree.levels[1]).toHaveLength(2);
     expect(tree.levels[2]).toHaveLength(1);
-    expect(bytesToHex0x(tree.levels[1][0])).toBe(SPEC_INNER_HASHES.N12);
-    expect(bytesToHex0x(tree.levels[1][1])).toBe(SPEC_INNER_HASHES.N34);
-    expect(bytesToHex0x(tree.levels[2][0])).toBe(SPEC_ROOT);
+    expect(bytesToHex0x(tree.levels[1]![0]!)).toBe(SPEC_INNER_HASHES.N12);
+    expect(bytesToHex0x(tree.levels[1]![1]!)).toBe(SPEC_INNER_HASHES.N34);
+    expect(bytesToHex0x(tree.levels[2]![0]!)).toBe(SPEC_ROOT);
   });
 
   it("does not mutate the input array", () => {

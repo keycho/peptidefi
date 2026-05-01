@@ -17,6 +17,7 @@
     "@supabase/supabase-js": "^2.45.4",
     "bs58": "^6.0.0",
     "dotenv": "^16.4.5",
+    "postgres": "^3.4.5",
     "zod": "^3.23.8"
   },
   "devDependencies": {

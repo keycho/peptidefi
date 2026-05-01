@@ -6,44 +6,42 @@ import {
   startHealthServer,
   type OracleHealthState,
 } from "./health";
+import { createSqlClient, type SqlClient } from "./db/client";
+import { acquireOracleLock, type AdvisoryLockHandle } from "./advisory-lock";
+import { runCyclePoller } from "./pollers/cycle-poller";
 
 /**
  * peptide-oracle on-chain commit service — entry point.
  *
- * SCAFFOLD ticket: structure only. The two pollers (cycle + TWAP) are
- * stubbed as heartbeat-only loops that log every cycle but don't yet
- * detect cycles, build memos, or submit transactions. Subsequent
- * tickets fill those in:
+ * Phase B build: the cycle poller now does real work — detect →
+ * fetch → adapt → tree → memo → write to commit_cycles +
+ * commit_observations atomically (status='pending'). NO Solana
+ * submission yet; that's Phase C.
  *
- *   - cycle poller / Merkle / memo / submit  → next ticket
- *   - TWAP poller                             → after that
- *   - confirmation polling + DB reconciliation → after that
- *   - long-tail retry job                      → final ticket
+ * Remaining ticket sequence:
  *
- * What this file already does correctly:
+ *   - Phase C: Solana commit submission + finalization polling
+ *   - TWAP poller (still heartbeat-only)
+ *   - long-tail retry job
+ *
+ * What this file does:
  *
  *   1. Load + validate config (refuses to start on misconfig — §03.5.2).
- *   2. Stand up the /health endpoint with the §03.9.2 required-field
+ *   2. Open a Postgres pool + acquire the §03.8.1 single-instance
+ *      advisory lock; refuse to start if another instance holds it.
+ *   3. Stand up the /health endpoint with the §03.9.2 required-field
  *      shape, served from a mutable in-memory state object.
- *   3. Spawn two concurrent async loops (cycle + TWAP heartbeats) at
- *      the §03.2.1 / §03.3.1 cadences.
- *   4. Honor SIGTERM / SIGINT — abort the inter-cycle sleep, let
- *      in-flight work finish, close the health server, exit 0.
- *      Mirrors the apps/worker shutdown shape.
+ *   4. Run the real cycle poller (Phase B) and a heartbeat-only TWAP
+ *      poller concurrently.
+ *   5. Honor SIGTERM / SIGINT — abort the inter-cycle sleep, let any
+ *      in-flight cycle finish writing, release the advisory lock,
+ *      close the pool + health server, exit 0.
  *
  * Deliberately NOT here yet (per ticket scope):
  *
- *   - @solana/web3.js Keypair construction or any RPC call. Config
- *     validates the secret key bytes parse, but we don't actually
- *     hand them to web3.js until the next ticket.
- *   - Postgres advisory lock acquisition (§03.8.1). Single-instance
- *     enforcement lives with the cycle poller ticket where it
- *     actually matters.
- *   - Supabase client construction. The dependency is in package.json
- *     so the next ticket doesn't need a fresh install, but no
- *     supabase-js calls happen here yet.
- *   - Balance check at startup (§03.5.2) — needs an RPC call and so
- *     belongs with the keypair / RPC integration.
+ *   - @solana/web3.js Keypair construction or any RPC call. Phase C.
+ *   - Balance check at startup (§03.5.2). Phase C.
+ *   - TWAP commit logic. Later ticket.
  */
 
 let config: OracleConfig;
@@ -79,23 +77,7 @@ function requestShutdown(signal: string): void {
 process.on("SIGINT", () => requestShutdown("SIGINT"));
 process.on("SIGTERM", () => requestShutdown("SIGTERM"));
 
-// ─── Heartbeat-only pollers (placeholders for later tickets) ───────────
-
-async function cyclePollerHeartbeat(): Promise<void> {
-  console.log(
-    `[startup] cycle poller heartbeat-only ` +
-      `(interval=${config.poll.cycleIntervalMs}ms; cycle detection lands in next ticket)`,
-  );
-  let tick = 0;
-  while (!stopRequested) {
-    tick += 1;
-    // Placeholder for: query commit_cycles + scraper_runs, build root,
-    // submit Memo tx. See §03.2 / §03.4. For now just log heartbeat.
-    console.log(`[cycle] heartbeat tick=${tick} pubkey=${config.solanaPublicKey}`);
-    if (stopRequested) break;
-    await sleepInterruptible(config.poll.cycleIntervalMs, shutdownAbort.signal);
-  }
-}
+// ─── TWAP heartbeat (placeholder — lands in a later ticket) ────────────
 
 async function twapPollerHeartbeat(): Promise<void> {
   console.log(
@@ -132,9 +114,27 @@ async function main(): Promise<void> {
   );
   console.log(`[startup] health endpoint on :${config.healthPort}/health`);
   console.warn(
-    `[startup] WARN: this is the SCAFFOLD build — pollers log heartbeats only. ` +
-      `No commits will be submitted to Solana. See ticket sequence in src/index.ts header.`,
+    `[startup] WARN: Phase B build — cycle poller writes commit_cycles rows ` +
+      `at status='pending' but does NOT submit to Solana. Phase C adds submission.`,
   );
+
+  // Open the Postgres pool. The advisory-lock acquisition uses a
+  // reserved connection out of this pool; the rest of the queries
+  // share the remaining slots.
+  const sql: SqlClient = createSqlClient({ databaseUrl: config.databaseUrl });
+
+  // Single-instance enforcement (§03.8.1). Refuses to start if another
+  // oracle process is already running against the same database.
+  let lock: AdvisoryLockHandle;
+  try {
+    lock = await acquireOracleLock(sql);
+    console.log("[startup] advisory lock acquired (single-instance enforced)");
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[fatal] ${msg}`);
+    await sql.end({ timeout: 5 });
+    process.exit(1);
+  }
 
   const healthServer = startHealthServer({
     port: config.healthPort,
@@ -150,10 +150,23 @@ async function main(): Promise<void> {
     // Run both pollers concurrently. Promise.allSettled rather than
     // Promise.all so one loop crashing doesn't take down the other —
     // the whole-process exit happens through stopRequested + shutdown.
-    await Promise.allSettled([cyclePollerHeartbeat(), twapPollerHeartbeat()]);
+    await Promise.allSettled([
+      runCyclePoller({
+        sql,
+        pollIntervalMs: config.poll.cycleIntervalMs,
+        abortSignal: shutdownAbort.signal,
+        health,
+      }),
+      twapPollerHeartbeat(),
+    ]);
     console.log("[shutdown] both pollers exited; closing health server");
   } finally {
     await new Promise<void>((resolve) => healthServer.close(() => resolve()));
+    // Release the advisory lock before the pool closes — the lock
+    // lives on a reserved connection from the pool, so it has to
+    // come first.
+    await lock.release();
+    await sql.end({ timeout: 5 });
     console.log("[shutdown] clean exit");
   }
 }
