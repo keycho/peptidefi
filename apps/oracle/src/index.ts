@@ -9,38 +9,39 @@ import {
 import { createSqlClient, type SqlClient } from "./db/client";
 import { acquireOracleLock, type AdvisoryLockHandle } from "./advisory-lock";
 import { runCyclePoller } from "./pollers/cycle-poller";
+import { runLongTailPoller } from "./pollers/long-tail-poller";
+import { OracleSolanaClient } from "./solana/client";
+import { loadOracleKeypair } from "./solana/keypair";
 
 /**
  * peptide-oracle on-chain commit service — entry point.
  *
- * Phase B build: the cycle poller now does real work — detect →
- * fetch → adapt → tree → memo → write to commit_cycles +
- * commit_observations atomically (status='pending'). NO Solana
- * submission yet; that's Phase C.
+ * Phase C build: the cycle poller now drives the full lifecycle —
+ * detect → write 'pending' → submit to Solana → poll for
+ * finalization → mark 'finalized'. The long-tail retry poller
+ * picks up rows whose in-flight retry budget was exhausted (§3.7.7).
  *
  * Remaining ticket sequence:
- *
- *   - Phase C: Solana commit submission + finalization polling
  *   - TWAP poller (still heartbeat-only)
- *   - long-tail retry job
  *
  * What this file does:
  *
  *   1. Load + validate config (refuses to start on misconfig — §03.5.2).
- *   2. Open a Postgres pool + acquire the §03.8.1 single-instance
+ *   2. Open the Postgres pool + acquire the §03.8.1 single-instance
  *      advisory lock; refuse to start if another instance holds it.
- *   3. Stand up the /health endpoint with the §03.9.2 required-field
+ *   3. Construct the Solana RPC client and the signing keypair.
+ *      Verify the wallet has at least ORACLE_MIN_STARTUP_BALANCE_SOL
+ *      (§03.5.2) — refuse to start if not.
+ *   4. Stand up the /health endpoint with the §03.9.2 required-field
  *      shape, served from a mutable in-memory state object.
- *   4. Run the real cycle poller (Phase B) and a heartbeat-only TWAP
- *      poller concurrently.
- *   5. Honor SIGTERM / SIGINT — abort the inter-cycle sleep, let any
+ *   5. Run the cycle poller, long-tail retry poller, and a
+ *      heartbeat-only TWAP poller concurrently.
+ *   6. Honor SIGTERM / SIGINT — abort the inter-cycle sleep, let any
  *      in-flight cycle finish writing, release the advisory lock,
  *      close the pool + health server, exit 0.
  *
  * Deliberately NOT here yet (per ticket scope):
  *
- *   - @solana/web3.js Keypair construction or any RPC call. Phase C.
- *   - Balance check at startup (§03.5.2). Phase C.
  *   - TWAP commit logic. Later ticket.
  */
 
@@ -113,9 +114,37 @@ async function main(): Promise<void> {
       `min-startup<${config.balance.minStartupSol} SOL`,
   );
   console.log(`[startup] health endpoint on :${config.healthPort}/health`);
-  console.warn(
-    `[startup] WARN: Phase B build — cycle poller writes commit_cycles rows ` +
-      `at status='pending' but does NOT submit to Solana. Phase C adds submission.`,
+
+  // Construct the Solana RPC client + signing keypair.
+  const solana = new OracleSolanaClient({
+    rpcUrl: config.rpcUrl,
+    rpcUrlFallback: config.rpcUrlFallback,
+  });
+  const payer = loadOracleKeypair(config.solanaSecretKey);
+
+  // §03.5.2 startup balance gate. Refuses to start if the wallet
+  // can't afford a single transaction.
+  let startupBalanceLamports: number;
+  try {
+    startupBalanceLamports = await solana.getBalanceLamports(
+      payer.publicKey.toBase58(),
+    );
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[fatal] balance check failed at startup: ${msg}`);
+    process.exit(1);
+  }
+  const startupSol = startupBalanceLamports / 1e9;
+  health.wallet.balance_sol = startupSol.toFixed(6);
+  if (startupSol < config.balance.minStartupSol) {
+    console.error(
+      `[fatal] balance ${startupSol} SOL < min-startup ${config.balance.minStartupSol} SOL — refusing to start (§03.5.2)`,
+    );
+    process.exit(1);
+  }
+  console.log(
+    `[startup] wallet balance: ${startupSol.toFixed(6)} SOL ` +
+      `(>= ${config.balance.minStartupSol} SOL min)`,
   );
 
   // Open the Postgres pool. The advisory-lock acquisition uses a
@@ -146,9 +175,13 @@ async function main(): Promise<void> {
     },
   });
 
+  const minBalanceLamports = Math.floor(
+    config.balance.minStartupSol * 1e9,
+  );
+
   try {
-    // Run both pollers concurrently. Promise.allSettled rather than
-    // Promise.all so one loop crashing doesn't take down the other —
+    // Run all pollers concurrently. Promise.allSettled rather than
+    // Promise.all so one loop crashing doesn't take down the others —
     // the whole-process exit happens through stopRequested + shutdown.
     await Promise.allSettled([
       runCyclePoller({
@@ -156,10 +189,20 @@ async function main(): Promise<void> {
         pollIntervalMs: config.poll.cycleIntervalMs,
         abortSignal: shutdownAbort.signal,
         health,
+        solana,
+        payer,
+        minBalanceLamports,
+        confirmationTimeoutMs: config.confirmation.timeoutMs,
+      }),
+      runLongTailPoller({
+        sql,
+        intervalMs: config.retry.longTailIntervalMs,
+        abortSignal: shutdownAbort.signal,
+        maxTotalRetries: config.retry.maxTotalRetries,
       }),
       twapPollerHeartbeat(),
     ]);
-    console.log("[shutdown] both pollers exited; closing health server");
+    console.log("[shutdown] all pollers exited; closing health server");
   } finally {
     await new Promise<void>((resolve) => healthServer.close(() => resolve()));
     // Release the advisory lock before the pool closes — the lock

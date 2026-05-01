@@ -67,6 +67,10 @@ const envSchema = z.object({
   ORACLE_HEALTH_STALE_THRESHOLD_MS: z.coerce.number().int().positive().default(1_800_000),
   ORACLE_HEALTH_WARMUP_MS: z.coerce.number().int().positive().default(3_600_000),
 
+  // Phase C retry tuning.
+  ORACLE_MAX_TOTAL_RETRIES: z.coerce.number().int().positive().default(20),
+  ORACLE_LONG_TAIL_INTERVAL_MS: z.coerce.number().int().positive().default(3_600_000),
+
   PEPTIDE_ORACLE_AUTHORITY_PUBKEY: z.string().optional(),
   NODE_ENV: z.string().optional(),
 });
@@ -108,6 +112,11 @@ export interface OracleConfig {
   health: {
     staleThresholdMs: number;
     warmupMs: number;
+  };
+
+  retry: {
+    maxTotalRetries: number;
+    longTailIntervalMs: number;
   };
 
   nodeEnv: string;
@@ -208,6 +217,11 @@ export function loadConfig(): OracleConfig {
     health: {
       staleThresholdMs: env.ORACLE_HEALTH_STALE_THRESHOLD_MS,
       warmupMs: env.ORACLE_HEALTH_WARMUP_MS,
+    },
+
+    retry: {
+      maxTotalRetries: env.ORACLE_MAX_TOTAL_RETRIES,
+      longTailIntervalMs: env.ORACLE_LONG_TAIL_INTERVAL_MS,
     },
 
     nodeEnv: env.NODE_ENV ?? "development",
