@@ -51,7 +51,7 @@ override.
 
 | variable | required? | description | where to get it |
 |---|---|---|---|
-| `SUPABASE_URL` | **required** | `https://pjsjaspntdjecfitogtc.supabase.co` (the active project URL) | Supabase dashboard → Project Settings → API |
+| `SUPABASE_URL` | **required** | `https://mnquozxfniasbpaavcos.supabase.co` — the new peptide-oracle project. The earlier `pjsjaspntdjecfitogtc.supabase.co` (biohack.market) is preserved read-only for the legacy product surface; do NOT point new scraper / worker / oracle deploys at it. | Supabase dashboard → Project Settings → API |
 | `SUPABASE_SECRET_KEY` | **required** | Service-role key. Bypasses RLS. Never ship to the browser. | Supabase dashboard → Project Settings → API → secret key. **Rotate after Railway deploy** since it's also pasted into our chat history. |
 | `GIT_SHA` | optional | Written to `scraper_runs.git_sha` for incident triage. | Railway sets `RAILWAY_GIT_COMMIT_SHA` automatically — point to it: `GIT_SHA=$RAILWAY_GIT_COMMIT_SHA`. |
 | `HOST_OVERRIDE` | optional | Identifies the running container in `scraper_runs.host`. Falls back to `os.hostname()`. Set to something descriptive if multiple replicas. | — |
