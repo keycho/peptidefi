@@ -510,21 +510,23 @@ The fourth Railway service in the existing project, alongside
 
 ### Note on deploy state
 
-Implementation hasn't started yet. The oracle service in
-`apps/oracle/` doesn't exist as code. You can either:
+The oracle service in `apps/oracle/` is implemented and ready to
+deploy as of Phase D (cycle commits + TWAP commits both verified
+end-to-end on devnet). The Dockerfile at `apps/oracle/Dockerfile`
+and the `apps/oracle/railway.json` config (Dockerfile builder,
+`pnpm start` start command, `/health` healthcheck) are wired so
+Railway can deploy directly from `claude/peptidefi-season-1-Hae69`
+or `main` once that branch is merged.
 
-- (a) **Configure now, deploy later.** Set up the service in
-  Railway's UI but don't connect it to a deployment until
-  `apps/oracle/` ships. Capture all the env vars now so they're
-  ready.
-- (b) **Configure + deploy a no-op skeleton.** Once the oracle
-  service skeleton lands (likely a stub `apps/oracle/src/index.ts`
-  that just starts the health server), point Railway at it. The
-  service runs but does nothing until the cycle/TWAP poller code
-  ships.
-
-Recommend (a) — less to undo if anything changes during
-implementation.
+**Devnet vs mainnet.** Production deployment to mainnet should
+come AFTER a sustained devnet run with real scraped data — at
+minimum, observe several hours of cycle commits without errors.
+For a devnet shakedown deployment, set `ORACLE_RPC_URL` to the
+Helius devnet endpoint (see env table below) and **use a
+separate keypair from the production-published authority**
+(`docs/oracle-authority.md`). Devnet signatures are auditable
+on the devnet cluster and should never share a pubkey with the
+production attestation key.
 
 ### Steps
 
@@ -566,17 +568,21 @@ In **Settings → Variables**, add the following one by one. **Mark
 secrets with the lock icon** as you add them (top-right of each
 variable's edit row).
 
-| variable                          | value                                               | secret? |
-| --------------------------------- | --------------------------------------------------- | ------- |
-| `ORACLE_SOLANA_PRIVATE_KEY`       | base58 string from §3                               | **YES** |
-| `ORACLE_RPC_URL`                  | mainnet Helius URL from §2                          | **YES** |
-| `SUPABASE_URL`                    | from §1                                             | no      |
-| `SUPABASE_SECRET_KEY`             | from §1                                             | **YES** |
-| `HEALTH_PORT`                     | `8080`                                              | no      |
-| `ORACLE_BALANCE_WARN_SOL`         | `0.30` (per §07.2.2 26-peptide tuning)              | no      |
-| `ORACLE_BALANCE_CRITICAL_SOL`     | `0.15`                                              | no      |
-| `PEPTIDE_ORACLE_AUTHORITY_PUBKEY` | the pubkey from §3 (used in startup logs)           | no      |
-| `NODE_ENV`                        | `production`                                        | no      |
+| variable                          | value                                                                                                                | secret? |
+| --------------------------------- | -------------------------------------------------------------------------------------------------------------------- | ------- |
+| `ORACLE_SOLANA_PRIVATE_KEY`       | base58 64-byte secret from §3 (devnet shakedown: a SEPARATE devnet-only keypair, NOT the production-published one)   | **YES** |
+| `ORACLE_RPC_URL`                  | Helius URL — **devnet:** `https://devnet.helius-rpc.com/?api-key=<KEY>` ; **mainnet:** `https://mainnet.helius-rpc.com/?api-key=<KEY>` | **YES** |
+| `SUPABASE_URL`                    | `https://mnquozxfniasbpaavcos.supabase.co` (the new peptide-oracle project from §1)                                  | no      |
+| `SUPABASE_SECRET_KEY`             | service-role key from §1 (`sb_secret_…`)                                                                             | **YES** |
+| `ORACLE_DATABASE_URL`             | Supabase **session-mode** Postgres URL (port 5432, NOT pooler-transaction port 6543). Format: `postgresql://postgres.<ref>:<password>@aws-1-<region>.pooler.supabase.com:5432/postgres` | **YES** |
+| `HEALTH_PORT`                     | `8080`                                                                                                               | no      |
+| `ORACLE_BALANCE_WARN_SOL`         | `0.30` (per §07.2.2 26-peptide tuning)                                                                               | no      |
+| `ORACLE_BALANCE_CRITICAL_SOL`     | `0.15`                                                                                                               | no      |
+| `ORACLE_MIN_STARTUP_BALANCE_SOL`  | `0.05` (refuse to start below this — catches misconfigured deploys before they generate failure waves)               | no      |
+| `ORACLE_MAX_TOTAL_RETRIES`        | `20` (Phase C — hard cap across in-flight + long-tail retries)                                                       | no      |
+| `ORACLE_LONG_TAIL_INTERVAL_MS`    | `3600000` (1h — sweep cadence for §3.7.7 long-tail retries)                                                          | no      |
+| `PEPTIDE_ORACLE_AUTHORITY_PUBKEY` | the pubkey derived from `ORACLE_SOLANA_PRIVATE_KEY` (used as a startup cross-check; mismatch → service refuses to start) | no      |
+| `NODE_ENV`                        | `production`                                                                                                         | no      |
 
 ### Verification
 
