@@ -69,7 +69,7 @@ observation.
 **Example** (canonical, byte-exact):
 
 ```
-{"completed_at":"2026-05-01T12:00:09.000Z","cycle_id":200,"merkle_root":"0x9c0516afa29a523ee901e26fd372c285d273671b5e08e7be606d6b8e8d22789e","observation_count":118,"started_at":"2026-05-01T12:00:00.000Z","type":"cycle","v":1}
+{"completed_at":"2026-05-01T12:00:09.000Z","cycle_id":200,"merkle_root":"0x100eeb8fabe2d1cb200324e8ccbcc3ead12cfa18224a744cbe11d813dcb32af8","observation_count":118,"started_at":"2026-05-01T12:00:00.000Z","type":"cycle","v":1}
 ```
 
 **Size:** 226 bytes UTF-8 (verified). Solana Memo program v2 accepts
@@ -126,7 +126,7 @@ on `algo` and verifies regardless.
 **Example** (canonical, byte-exact):
 
 ```
-{"algo":"filtered_median_v1","computed_at":"2026-05-01T12:00:00.000Z","observation_set_root":"0x9c0516afa29a523ee901e26fd372c285d273671b5e08e7be606d6b8e8d22789e","peptide_code":"BPC157","twap_value":"5.998000","type":"twap","v":1,"window_end":"2026-05-01T12:00:00.000Z","window_start":"2026-05-01T11:00:00.000Z"}
+{"algo":"filtered_median_v1","computed_at":"2026-05-01T12:00:00.000Z","observation_set_root":"0x100eeb8fabe2d1cb200324e8ccbcc3ead12cfa18224a744cbe11d813dcb32af8","peptide_code":"BPC157","twap_value":"5.998000","type":"twap","v":1,"window_end":"2026-05-01T12:00:00.000Z","window_start":"2026-05-01T11:00:00.000Z"}
 ```
 
 **Size:** 312 bytes UTF-8 (verified). Up from 284 in the pre-`algo`
@@ -409,10 +409,20 @@ bytes of all four leaf hashes and the tree above them. **All hashes
 here are real SHA-256 outputs** of the bytes shown — recompute them
 in any language to verify.
 
+**Note on decimal scales:** the `raw_price`, `fx_rate_to_usd`, and
+`price_usd_per_mg` strings below reflect schema migration 0004
+(`numeric(20,6)`, `numeric(20,8)`, `numeric(20,6)` respectively).
+Per §2.5 the canonical decimal string is whatever Postgres returns
+for `column::text`; a fixed-scale numeric column always renders
+with that exact scale, so e.g. `54.5` stored in a `numeric(20,6)`
+column canonicalizes as `"54.500000"`. The canonicalization rule
+itself is unchanged from the v1 spec — only the example strings
+below were corrected to match the schema's actual scales.
+
 **Observation 1 canonical form** (sorted keys, no whitespace):
 
 ```
-{"availability_tier":"in_stock","fx_rate_to_usd":"1.000000","http_status":200,"id":1001,"lead_time_days":null,"observed_at":"2026-05-01T12:00:00.000Z","peptide_id":12,"price_usd_per_mg":"3.633333","raw_availability":"in stock","raw_currency":"USD","raw_html_hash":"0xaaaaaaaa","raw_price":"54.50","scrape_error":null,"scrape_success":true,"scraper_run_id":200,"supplier_id":7,"supplier_product_id":140}
+{"availability_tier":"in_stock","fx_rate_to_usd":"1.00000000","http_status":200,"id":1001,"lead_time_days":null,"observed_at":"2026-05-01T12:00:00.000Z","peptide_id":12,"price_usd_per_mg":"3.633333","raw_availability":"in stock","raw_currency":"USD","raw_html_hash":"0xaaaaaaaa","raw_price":"54.500000","scrape_error":null,"scrape_success":true,"scraper_run_id":200,"supplier_id":7,"supplier_product_id":140}
 ```
 
 **Observations 2 / 3 / 4** follow the same shape with the values
@@ -427,9 +437,9 @@ derivable from these inputs and §2.1.)
 | supplier_product_id | 140                   | 141                     | 142                         | 143                     |
 | scraper_run_id    | 200                     | 200                     | 200                         | 200                     |
 | observed_at       | 2026-05-01T12:00:00.000Z | 2026-05-01T12:00:01.000Z | 2026-05-01T12:00:02.000Z | 2026-05-01T12:00:03.000Z |
-| raw_price         | "54.50"                 | "75.00"                 | null                        | null                    |
+| raw_price         | "54.500000"             | "75.000000"             | null                        | null                    |
 | raw_currency      | "USD"                   | "USD"                   | "USD"                       | null                    |
-| fx_rate_to_usd    | "1.000000"              | "1.000000"              | "1.000000"                  | null                    |
+| fx_rate_to_usd    | "1.00000000"            | "1.00000000"            | "1.00000000"                | null                    |
 | price_usd_per_mg  | "3.633333"              | "5.000000"              | null                        | null                    |
 | raw_availability  | "in stock"              | "in stock"              | "sold out"                  | null                    |
 | availability_tier | "in_stock"              | "in_stock"              | "out_of_stock"              | "unknown"               |
@@ -442,9 +452,9 @@ derivable from these inputs and §2.1.)
 **Leaf hashes** (`SHA-256(0x00 || canonical_json_utf8)`):
 
 ```
-L1 = 0x1e16c4304f26d820628da73d43579cb3dd6e5f5a9a47a2cb299ace9ee7330594
-L2 = 0x959381874f74d9903fbdeb87ad8c1d77e7b9e3a066abcc0d14b467fb0cbfafde
-L3 = 0xee80eadf0626319bf490cd0d7aabae0c737d905c09d6e5e36f645b19cdf221d3
+L1 = 0x799fe69ea74165d8321268f25d560e3ed48f57ab4d0552a9d866acda15238db5
+L2 = 0x1eabe587a9f12e9a7cce5e0d601146e2e4011100961f19d2e11c8759f52f72b2
+L3 = 0x8c02334f0c170326a91dd6d64b27a44b48ff67d2dbc1afb9986ec7ba2eb6db23
 L4 = 0xea784b0d61953f0f61a236f49fa7bbfae729a3b5a874ef9e3dfa140ecc21b567
 ```
 
@@ -453,30 +463,30 @@ concatenated):
 
 ```
 N12 = SHA-256(0x01 || L1_bytes || L2_bytes)
-    = 0xae4cca3083ad2b4cdd9a444dc20b41861f7c41d8521324d52e8c94a3faf2d0d2
+    = 0xab602f7b7e6eafb0c9a8d67d372a05df930f4236b8188467f61aa01055f0fbdb
 
 N34 = SHA-256(0x01 || L3_bytes || L4_bytes)
-    = 0x0ec68c7f5b4d998218079a2bc8a7ff6f4b29297e9b755cacf051433cb62479d4
+    = 0xe8311c85eda90c265477f52a679554cebfff67611144f1a52f16a1a753d232b8
 ```
 
 **Root:**
 
 ```
 ROOT = SHA-256(0x01 || N12_bytes || N34_bytes)
-     = 0x9c0516afa29a523ee901e26fd372c285d273671b5e08e7be606d6b8e8d22789e
+     = 0x100eeb8fabe2d1cb200324e8ccbcc3ead12cfa18224a744cbe11d813dcb32af8
 ```
 
 **Tree visualisation:**
 
 ```
                           ROOT
-                  9c0516af…d22789e
+                  100eeb8f…cb32af8
                  /                \
             N12                    N34
-     ae4cca30…faf2d0d2      0ec68c7f…b62479d4
+     ab602f7b…55f0fbdb      e8311c85…53d232b8
      /        \              /        \
    L1          L2          L3          L4
-1e16c430… 95938187…    ee80eadf… ea784b0d…
+799fe69e… 1eabe587…    8c02334f… ea784b0d…
    |          |           |          |
  obs 1     obs 2       obs 3      obs 4
 ```
@@ -485,7 +495,7 @@ The cycle commit memo for this example would be (cycle_id=200,
 observation_count=4):
 
 ```
-{"completed_at":"2026-05-01T12:00:09.000Z","cycle_id":200,"merkle_root":"0x9c0516afa29a523ee901e26fd372c285d273671b5e08e7be606d6b8e8d22789e","observation_count":4,"started_at":"2026-05-01T12:00:00.000Z","type":"cycle","v":1}
+{"completed_at":"2026-05-01T12:00:09.000Z","cycle_id":200,"merkle_root":"0x100eeb8fabe2d1cb200324e8ccbcc3ead12cfa18224a744cbe11d813dcb32af8","observation_count":4,"started_at":"2026-05-01T12:00:00.000Z","type":"cycle","v":1}
 ```
 
 A verifier with observation 3 (in its current Postgres form) and
@@ -640,7 +650,7 @@ These don't change the spec but help anyone building it:
   not worth optimizing.
 - Test with the worked example above as a regression vector.
   Implementations that don't reproduce `ROOT =
-  0x9c0516afa29a523ee901e26fd372c285d273671b5e08e7be606d6b8e8d22789e`
+  0x100eeb8fabe2d1cb200324e8ccbcc3ead12cfa18224a744cbe11d813dcb32af8`
   for the input above are wrong.
 - Two convenient libraries: `node:crypto` (Node) and `hashlib`
   (Python). Both produce the same SHA-256 bytes given the same

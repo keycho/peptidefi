@@ -429,7 +429,7 @@ List recent cycle commits, paginated, newest first.
       "started_at": "2026-05-01T12:00:00.000Z",
       "completed_at": "2026-05-01T12:00:09.000Z",
       "observation_count": 118,
-      "merkle_root": "0x9c0516afa29a523ee901e26fd372c285d273671b5e08e7be606d6b8e8d22789e",
+      "merkle_root": "0x100eeb8fabe2d1cb200324e8ccbcc3ead12cfa18224a744cbe11d813dcb32af8",
       "status": "finalized",
       "solana": {
         "signature": "5VfYTAH...",
@@ -490,7 +490,7 @@ by `leaf_index` ascending.
     {
       "observation_id": 88291,
       "leaf_index": 0,
-      "leaf_hash": "0x1e16c4304f26d820...",
+      "leaf_hash": "0x799fe69ea74165d8...",
       "supplier_id": 7,
       "peptide_id": 12,
       "supplier_product_id": 140,
@@ -521,13 +521,13 @@ Merkle proof for a specific observation in a cycle.
 {
   "cycle_id": 1042,
   "observation_id": 88291,
-  "leaf_hash": "0x1e16c4304f26d820...",
+  "leaf_hash": "0x799fe69ea74165d8...",
   "leaf_index": 0,
-  "merkle_root": "0x9c0516afa29a523e...",
+  "merkle_root": "0x100eeb8fabe2d1cb...",
   "observation_count": 118,
   "proof": [
-    { "position": "right", "hash": "0x959381874f74d990..." },
-    { "position": "right", "hash": "0x0ec68c7f5b4d9982..." }
+    { "position": "right", "hash": "0x1eabe587a9f12e9a..." },
+    { "position": "right", "hash": "0xe8311c85eda90c26..." }
   ]
 }
 ```
@@ -566,7 +566,7 @@ verification metadata.
   "computed_at": "2026-05-01T12:00:00.000Z",
   "window_start": "2026-05-01T11:00:00.000Z",
   "window_end": "2026-05-01T12:00:00.000Z",
-  "observation_set_root": "0x9c0516af...",
+  "observation_set_root": "0x100eeb8f...",
   "status": "finalized",
   "solana": {
     "signature": "5VfYTAH...",
@@ -692,9 +692,9 @@ Single observation, full canonical form, with commit membership.
     "supplier_product_id": 140,
     "scraper_run_id": 1042,
     "observed_at": "2026-05-01T12:00:00.000Z",
-    "raw_price": "54.50",
+    "raw_price": "54.500000",
     "raw_currency": "USD",
-    "fx_rate_to_usd": "1.000000",
+    "fx_rate_to_usd": "1.00000000",
     "price_usd_per_mg": "3.633333",
     "raw_availability": "in stock",
     "availability_tier": "in_stock",
@@ -702,12 +702,12 @@ Single observation, full canonical form, with commit membership.
     "scrape_success": true,
     "scrape_error": null,
     "http_status": 200,
-    "raw_html_hash": "1e16c4304f26d820..."
+    "raw_html_hash": "0xaaaaaaaa"
   },
   "canonical_leaf_json": "{\"availability_tier\":\"in_stock\",...}",
   "commit": {
     "cycle_id": 1042,
-    "leaf_hash": "0x1e16c4304f26d820...",
+    "leaf_hash": "0x799fe69ea74165d8...",
     "leaf_index": 0,
     "status": "finalized",
     "solana_signature": "5VfYTAH..."
