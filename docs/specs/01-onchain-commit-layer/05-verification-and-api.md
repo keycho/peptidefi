@@ -199,6 +199,92 @@ later" and `failed` / `cycle_skipped` / `ineligible_for_commit` as
 "this observation will not have on-chain provenance unless the
 operator takes action."
 
+### 5.2.4 Authority pubkey: the trust-anchor
+
+Step 10 of the verification flow checks that the on-chain
+transaction was signed by the **oracle authority pubkey**. This
+is the load-bearing assumption of the entire trust model: every
+proof we provide is "this commit was signed by the key the oracle
+operator publicly committed to." If a verifier accepts the wrong
+authority pubkey, every other check is irrelevant — an attacker
+could mint counterfeit commits with any memo bytes they want.
+
+This subsection documents how a verifier obtains the authority
+pubkey, what assumptions that depends on, and how the trust model
+hardens over future protocol versions.
+
+#### v1 — multi-channel publication
+
+The authority pubkey is published in **three** channels for
+cross-reference. A diligent verifier checks at least two of them
+agree before trusting any commit:
+
+1. **`GET /api/oracle/info`** (§5.4.11). The live API surface.
+   Convenient for programmatic verifiers but requires trusting
+   that the API itself wasn't compromised — an attacker who
+   controls the API host could serve a different pubkey to direct
+   verifiers at counterfeit commits they signed themselves.
+2. **The project's GitHub repository.** A `docs/oracle-authority.md`
+   file (lands with the committer service implementation) commits
+   the authority pubkey to a versioned, publicly auditable
+   artifact. Git history makes any rotation visible.
+3. **Project social channels and documentation site.** Twitter / X
+   post pinned to the project account, plus the public
+   documentation site, both citing the same pubkey. Multiple
+   independent surfaces an attacker would need to compromise
+   simultaneously.
+
+**Trust model summary for v1:** verifying a commit requires
+trusting that **at least one** of the three channels above has
+not been compromised. An attacker attempting to mint counterfeit
+commits would need to either steal the actual private key
+(see §03.5) or simultaneously poison every channel a careful
+verifier would consult — the former is detectable via balance
+monitoring, the latter is operationally hard.
+
+This is materially better than "trust whatever pubkey the API
+returns" but it is not zero-trust. Sophisticated verifiers (§5.1.2)
+should hardcode the pubkey on first contact and refuse to update it
+across runs without human review — same pattern SSH uses for host
+keys (TOFU + warn-on-change).
+
+#### v2 candidates — toward zero-trust
+
+Two enhancements deferred to v2:
+
+- **Bake the authority pubkey into the versioned verification
+  library.** A consumer pinning `@peptide-oracle/verify@1.2.0`
+  gets the authority pubkey at build time, not at run time. Library
+  releases are signed and reproducibly built; an attacker who
+  compromises the API host can't downgrade existing consumers.
+  Library updates that change the pubkey require a major version
+  bump with explicit operator-side rotation announcement.
+- **Anchor the authority pubkey + protocol version via a one-time
+  on-chain "genesis" commit.** The oracle's first transaction on
+  mainnet is a Memo containing
+  `{"v":1,"type":"genesis","authority_pubkey":"...","protocol_version":1,"effective_at":"<iso>"}`.
+  Subsequent verifications can reference the genesis signature as
+  the bootstrap anchor — verifying any commit becomes "trust
+  Solana finality + trust the genesis tx + walk the chain." The
+  genesis tx's signature would need to be published in the same
+  multi-channel way as the authority pubkey itself, but it
+  trades operator-publication trust for chain-history trust on
+  every subsequent commit.
+
+Both v2 candidates strengthen the trust model without changing the
+v1 cryptographic primitives — they're additive. v1 ships without
+them and the spec is honest about the trust assumption it carries.
+
+#### Rotation impact
+
+The §03.5.4 keypair rotation procedure must update **all three
+v1 channels in lockstep** when the authority pubkey changes —
+otherwise a verifier mid-rotation sees disagreement across
+channels and (per the recommended TOFU semantics above) refuses
+to verify until the rotation completes. The runbook (§8) will
+spell out the rotation order and the expected window of
+verifier-side disagreement.
+
 ## 5.3 Verification flow for a TWAP value
 
 Given a `(peptide_code, timestamp)` tuple, the verifier walks:
@@ -229,12 +315,29 @@ Given a `(peptide_code, timestamp)` tuple, the verifier walks:
    memo (which was already byte-compared in step 3, so this is
    a sanity check).
 7. **(Optional, "full" verification only) Recompute the TWAP value.**
-   Apply the v1 TWAP algorithm (median of in-stock, scrape-successful
-   observations across the window — see §03.3.2 for the source
-   query) to the verified observation set. Compare to
-   `twap_commits.twap_value`. A mismatch here is operationally
-   significant (operator computed the TWAP wrong) but doesn't
-   invalidate the on-chain anchoring.
+   Read `algo` from the on-chain memo (§02.2.3). Dispatch to the
+   matching algorithm implementation:
+
+   ```
+   if memo.algo == "filtered_median_v1":
+       run filtered_median_v1 over the verified observation set
+       compare result to memo.twap_value (string-equality on the
+       canonical decimal form — see §02.2.5)
+   else:
+       refuse: VerificationCheck { name: "twap_recompute",
+                                    passed: false,
+                                    detail: "unknown algo: <algo>" }
+   ```
+
+   Verifier libraries MUST refuse to fall back to a default
+   algorithm when `algo` is unknown — silently using the wrong
+   algorithm would produce a confident-but-wrong "verified" result.
+   `filtered_median_v1` is documented in §03.3.2 and the worker's
+   `apps/worker/src/twap.ts`. A mismatch between the recomputed
+   value and `memo.twap_value` is operationally significant
+   (operator computed the TWAP wrong) but doesn't invalidate the
+   on-chain anchoring of the Merkle-root chain of evidence
+   (steps 2–6 above).
 8. **Confirm finality + signer** (same as §5.2 steps 9–10).
 
 If steps 1–6 + 8 pass: **verified.** The TWAP value the operator
@@ -269,22 +372,28 @@ to wait until all contributing cycles are `finalized` before
 submitting a TWAP commit (§03.3.3 — TWAP poller skews to `HH:00:30`
 exactly so all hourly inputs are anchored first).
 
-### 5.3.3 TWAP algorithm reproducibility (note for v2)
+### 5.3.3 TWAP algorithm reproducibility
 
-Step 7 (recompute TWAP) is the one part of the verification flow
-that depends on the operator's algorithm. For v1 the algorithm is
-"median of in-stock prices in the window" (per the existing
-worker). If the algorithm changes, historical verifications would
-silently disagree on step 7 unless the verifier knows which version
-of the algorithm to use.
+The `algo` field in the TWAP commit memo (§02.2.3, added during
+review) makes step 7 deterministic across algorithm changes. v1
+ships `"filtered_median_v1"` as the only algorithm. When the
+operator ships a future algorithm (e.g., `"filtered_median_v2"`
+adding MAD-based outlier filtering), the new commits carry the
+new identifier and historical commits keep verifying against
+their original algorithm — neither set silently disagrees with
+the other.
 
-v1 mitigation: the algorithm is locked. Document it in the parent
-overview and reference here.
+This isn't a memo schema version bump — `v` (§02.2.3) governs
+the JSON schema, `algo` governs the value-production algorithm.
+The two evolve independently. A v1 schema commit can carry any
+`algo` identifier the operator publishes; a hypothetical v2 schema
+bump would document its own constraints on what `algo` values are
+allowed.
 
-v2 candidate: encode the algorithm version in the TWAP memo (e.g.,
-add `"algo": "median_v1"` to the TWAP memo schema). Bumping `v` to
-2 + adding `algo` makes step 7 deterministic across algorithm
-changes. Out of scope for this section but worth flagging.
+Verifier libraries should accept new `algo` values as the algorithms
+ship (one new pure function added to the library per algorithm),
+and MUST refuse — not silently fall back — when they encounter an
+identifier they don't recognise.
 
 ## 5.4 API endpoints
 
@@ -452,6 +561,7 @@ verification metadata.
 ```json
 {
   "peptide_code": "BPC157",
+  "algo": "filtered_median_v1",
   "twap_value": "5.998000",
   "computed_at": "2026-05-01T12:00:00.000Z",
   "window_start": "2026-05-01T11:00:00.000Z",
@@ -464,7 +574,7 @@ verification metadata.
     "cluster": "mainnet-beta",
     "explorer_url": "https://solscan.io/tx/5VfYTAH..."
   },
-  "memo_payload": "{\"computed_at\":\"...\",...}",
+  "memo_payload": "{\"algo\":\"filtered_median_v1\",\"computed_at\":\"...\",...}",
   "input_observation_ids": [88291, 88317, 88401, 88455]
 }
 ```
@@ -861,6 +971,7 @@ export interface CycleCommitData {
 }
 
 export interface TWAPCommitData {
+  algo: string;                    // e.g. "filtered_median_v1" — see §02.2.3
   peptide_code: string;
   twap_value: string;
   computed_at: string;
@@ -927,10 +1038,14 @@ export function verifyObservation(
  * Performs §5.3 steps 2-3 + 6 + 8 client-side, plus
  * verifyObservation() per constituent.
  *
- * recomputeTwap: if true, also re-runs the v1 TWAP algorithm
- * over the verified observation set and compares to twapCommit.twap_value
- * (§5.3.1 step 7). Defaults to false — caller opts in for full
- * verification.
+ * recomputeTwap: if true, also re-runs the TWAP algorithm
+ * identified by twapCommit.algo over the verified observation
+ * set and compares to twapCommit.twap_value (§5.3.1 step 7).
+ * Defaults to false — caller opts in for full verification.
+ *
+ * The library refuses recompute if it doesn't recognise
+ * twapCommit.algo (returns a VerificationResult with verified=false
+ * and failure_reason='unknown_algo'). It does NOT silently fall back.
  */
 export function verifyTWAP(
   twapCommit: TWAPCommitData,

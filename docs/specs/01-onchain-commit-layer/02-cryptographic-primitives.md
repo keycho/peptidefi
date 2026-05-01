@@ -91,6 +91,7 @@ peptide subset).
 | ----------------------- | ------- | ---------------------------------------------------------------------------------------- |
 | `v`                     | integer | Protocol version. Always `1`.                                                            |
 | `type`                  | string  | Always the literal `"twap"`.                                                             |
+| `algo`                  | string  | Algorithm identifier. v1 ships a single algorithm: `"filtered_median_v1"` — see below.   |
 | `peptide_code`          | string  | The `peptides.code` value (e.g. `"BPC157"`). Stable identifier, never renamed.           |
 | `twap_value`            | string  | The `peptide_twaps.twap_usd_per_mg` value rendered per §2.5. **String, not number.**     |
 | `computed_at`           | string  | `peptide_twaps.computed_at` in canonical timestamp form.                                 |
@@ -98,14 +99,42 @@ peptide subset).
 | `window_end`            | string  | `peptide_twaps.window_end` in canonical timestamp form.                                  |
 | `observation_set_root`  | string  | `0x` + 64 hex. Merkle root over the observations that fed this TWAP — see §2.6.          |
 
-**Example:**
+**About `algo`** (added during review): the field identifies which
+TWAP algorithm produced `twap_value`. v1 ships a single algorithm,
+named `"filtered_median_v1"`. "Filtered" refers to the **input
+filtering** the worker applies before computing the median —
+latest-per-supplier-within-freshness-ceiling, `scrape_success=true`,
+`availability_tier='in_stock'`. The median itself is unfiltered
+(no outlier removal); the v1 design is documented in
+`apps/worker/src/twap.ts` and §03.3.2.
+
+Why ship `algo` in v1 rather than waiting for a v2 protocol bump:
+keeps historical verifications deterministic forever. If we ever
+ship a `"filtered_median_v2"` (e.g. adding MAD-based outlier
+filtering), commits made under v1 still verify against the v1
+algorithm and commits made under v2 verify against v2. Without
+the field, every algorithm change would silently invalidate
+previous TWAP-value-recomputation checks. The same `v` field still
+governs memo schema versioning (§2.4); `algo` governs the value-
+production algorithm independently.
+
+A verifier MUST inspect `algo` and refuse to recompute the TWAP
+value if it doesn't recognise the identifier (per §05.3 step 7).
+The Merkle-root chain of evidence (§5.3 steps 2–6) doesn't depend
+on `algo` and verifies regardless.
+
+**Example** (canonical, byte-exact):
 
 ```
-{"computed_at":"2026-05-01T12:00:00.000Z","observation_set_root":"0x9c0516afa29a523ee901e26fd372c285d273671b5e08e7be606d6b8e8d22789e","peptide_code":"BPC157","twap_value":"5.998000","type":"twap","v":1,"window_end":"2026-05-01T12:00:00.000Z","window_start":"2026-05-01T11:00:00.000Z"}
+{"algo":"filtered_median_v1","computed_at":"2026-05-01T12:00:00.000Z","observation_set_root":"0x9c0516afa29a523ee901e26fd372c285d273671b5e08e7be606d6b8e8d22789e","peptide_code":"BPC157","twap_value":"5.998000","type":"twap","v":1,"window_end":"2026-05-01T12:00:00.000Z","window_start":"2026-05-01T11:00:00.000Z"}
 ```
 
-**Size:** 284 bytes UTF-8 (verified). Same Memo / transaction
-budget headroom as cycle commits.
+**Size:** 312 bytes UTF-8 (verified). Up from 284 in the pre-`algo`
+draft; ~28 extra bytes for the `"algo":"filtered_median_v1",`
+fragment. Same Memo / transaction budget headroom as cycle
+commits — Memo program v2 caps at 566 bytes per memo and the full
+transaction stays well under both 1232 (legacy) and 1644
+(versioned) byte ceilings.
 
 ### 2.4 Versioning
 
