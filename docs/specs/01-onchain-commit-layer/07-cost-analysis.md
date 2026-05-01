@@ -44,8 +44,10 @@ network conditions, or commit type.
 **Priority fee.** Per §03.4.4, the committer adds compute-budget
 instructions setting:
 
-- Compute unit limit: 500 CU (Memo program uses ~200 CU; 500 buffers
-  for program changes)
+- Compute unit limit: **150,000 CU** (the Memo program on Solana
+  4.0 costs ~420 CU/byte; a 312-byte TWAP memo consumes ~131k CU,
+  150k gives ~14% headroom). Empirical measurement: a 224-byte
+  cycle memo on devnet consumed 93,889 CU.
 - Compute unit price: dynamic from Helius's `getPriorityFeeEstimate`
   API at the 75th percentile, capped at 50,000 µlamports/CU
 
@@ -53,33 +55,48 @@ instructions setting:
 priority_fee = compute_units × compute_unit_price (in µlamports)
 ```
 
-At our 500-CU budget:
+At our 150,000-CU budget (note: actual Memo execution consumes
+~94k–131k CU depending on memo size; we pay only for what we
+consume, but the price-cap math uses the limit):
 
-| network state    | CU price (µlamports) | priority fee   | total per tx (incl. base) |
-| ---------------- | -------------------- | -------------- | ------------------------- |
-| Calm (low)       | 1,000                | 500 lamports   | 5,500 lamports            |
-| Median (75th %)  | 10,000               | 5,000 lamports | 10,000 lamports           |
-| High (cap)       | 50,000               | 25,000 lamports| 30,000 lamports           |
+| network state    | CU price (µlamports) | priority fee at actual ~131k CU | total per tx (incl. base) |
+| ---------------- | -------------------- | ------------------------------- | ------------------------- |
+| Calm (low)       | 1,000                | 131 lamports                    | 5,131 lamports            |
+| Median (75th %)  | 10,000               | 1,310 lamports                  | 6,310 lamports            |
+| High (cap)       | 50,000               | 6,550 lamports                  | 11,550 lamports           |
 
-In SOL: 0.0000055 / 0.00001 / 0.00003 SOL per tx for low / median / high.
+In SOL: ~0.0000051 / ~0.0000063 / ~0.0000116 SOL per tx for
+low / median / high.
 
-### 7.1.2 Memo size doesn't materially change cost
+(The earlier draft of this table assumed a 500-CU budget and ~200
+CU Memo cost — wildly off by ~270×. The corrected numbers come
+from the Phase C devnet smoke test that anchored signature
+`34qyG6kdTXK…GnQjB` at slot 459432743.)
 
-Solana's fee model is per-signature, not per-byte. The size
-difference between a cycle commit memo (226 bytes) and a TWAP
-commit memo (312 bytes) doesn't affect the base fee, and the
-Memo program's CU consumption doesn't scale meaningfully with
-payload size for our small payloads — both stay around 200 CU.
-For costing purposes, **all commits are priced identically**.
+### 7.1.2 Memo size scales CU consumption ~linearly
+
+Solana's base fee is per-signature, not per-byte, but the Memo
+program's CU consumption scales ~linearly with payload size on
+Solana 4.0 (~420 CU/byte). For our payload range (226–312 bytes),
+that's ~95–131k CU. Priority-fee cost varies proportionally:
+
+- 226-byte cycle memo: ~95k CU × CU price
+- 312-byte TWAP memo: ~131k CU × CU price
+
+For costing purposes we use the worst-case (~131k CU) as a
+conservative ceiling — actual cycle commits will run ~28% cheaper
+in priority fee than the TWAP figure suggests.
 
 ### 7.1.3 Cycle commits
 
 - **Frequency**: every 10 minutes = 144/day = 52,560/year
 - **Memo size**: 226 bytes (§02.2.2)
-- **Per-commit cost** (median priority fee): 10,000 lamports = 0.00001 SOL
+- **CU consumption**: ~94,000 (empirical, devnet)
+- **Per-commit cost** (median priority fee 10,000 µ/CU):
+  5,000 base + 94,000 × 0.01 = 5,940 lamports ≈ **0.0000059 SOL**
 
-Daily cycle-commit cost (median): 144 × 10,000 = 1,440,000 lamports
-= **0.00144 SOL/day** ($0.29 @ $200/SOL).
+Daily cycle-commit cost (median): 144 × 5,940 ≈ 855,360 lamports
+= **0.00086 SOL/day** ($0.17 @ $200/SOL).
 
 ### 7.1.4 TWAP commits
 
@@ -89,20 +106,24 @@ Daily cycle-commit cost (median): 144 × 10,000 = 1,440,000 lamports
   decision — no allow-list restriction. Every active peptide gets
   hourly TWAP commits.
 - **Memo size**: 312 bytes (§02.2.3, post-`algo`)
-- **Per-commit cost** (median priority fee): 10,000 lamports = 0.00001 SOL
+- **CU consumption**: ~131,000 (interpolated at ~420 CU/byte)
+- **Per-commit cost** (median priority fee 10,000 µ/CU):
+  5,000 base + 131,000 × 0.01 = 6,310 lamports ≈ **0.0000063 SOL**
 
-Daily TWAP-commit cost at N=26 (median): 624 × 10,000 = 6,240,000
-lamports = **0.00624 SOL/day** ($1.25 @ $200/SOL).
+Daily TWAP-commit cost at N=26 (median): 624 × 6,310 ≈ 3,937,440
+lamports = **0.00394 SOL/day** ($0.79 @ $200/SOL).
 
 ### 7.1.5 Daily totals
 
-At v1 (26 peptides), 768 transactions/day (144 cycle + 624 TWAP):
+At v1 (26 peptides), 768 transactions/day (144 cycle + 624 TWAP).
+Using the 131k-CU TWAP figure as a conservative ceiling for both
+commit types:
 
 | scenario            | per-tx cost     | daily SOL    | daily USD @ $100 | daily USD @ $200 | daily USD @ $300 |
 | ------------------- | --------------- | ------------ | ---------------- | ---------------- | ---------------- |
-| Low (calm)          | 5,500 lamports  | 0.00422 SOL  | $0.42            | $0.84            | $1.27            |
-| **Median (75th %)** | 10,000 lamports | 0.00768 SOL  | **$0.77**        | **$1.54**        | **$2.30**        |
-| High (cap)          | 30,000 lamports | 0.02304 SOL  | $2.30            | $4.61            | $6.91            |
+| Low (calm) 1,000 µ  | 5,131 lamports  | 0.00394 SOL  | $0.39            | $0.79            | $1.18            |
+| **Median (75th %) 10,000 µ** | 6,310 lamports | 0.00485 SOL | **$0.49** | **$0.97** | **$1.45** |
+| High (cap) 50,000 µ | 11,550 lamports | 0.00887 SOL  | $0.89            | $1.77            | $2.66            |
 
 Median is the planning baseline; all subsequent figures use it
 unless noted. Note that the 26-peptide active set is ~2.9× the

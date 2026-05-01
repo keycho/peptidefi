@@ -308,7 +308,7 @@ async function submitOnePending(opts: CyclePollerOptions): Promise<void> {
       lastValidBlockHeight: blockhash.lastValidBlockHeight,
       payer: opts.payer,
       priorityFeeMicroLamports: 1000, // ignored; placeholder
-      cuLimit: 500,
+      cuLimit: 150_000,
     });
     const draftBase64 = Buffer.from(draft.serialized).toString("base64");
     priorityFee = await opts.solana.getPriorityFeeEstimateMicroLamports(
@@ -333,7 +333,7 @@ async function submitOnePending(opts: CyclePollerOptions): Promise<void> {
       lastValidBlockHeight: blockhash.lastValidBlockHeight,
       payer: opts.payer,
       priorityFeeMicroLamports: priorityFee,
-      cuLimit: 500,
+      cuLimit: 150_000,
     });
   } catch (err) {
     const cls = classifyError(err);

@@ -41,7 +41,7 @@ describe("buildSignedMemoTx", () => {
       lastValidBlockHeight: FAKE_VALID_HEIGHT,
       payer: fixedKeypair(),
       priorityFeeMicroLamports: 1000,
-      cuLimit: 500,
+      cuLimit: 150_000,
     });
 
     // Re-deserialize the tx so the test reads the same shape that
@@ -93,7 +93,7 @@ describe("buildSignedMemoTx", () => {
       lastValidBlockHeight: FAKE_VALID_HEIGHT,
       payer: fixedKeypair(),
       priorityFeeMicroLamports: 1000,
-      cuLimit: 500,
+      cuLimit: 150_000,
     };
     const a = buildSignedMemoTx(args);
     const b = buildSignedMemoTx(args);
@@ -107,7 +107,7 @@ describe("buildSignedMemoTx", () => {
       lastValidBlockHeight: FAKE_VALID_HEIGHT,
       payer: fixedKeypair(),
       priorityFeeMicroLamports: 1000,
-      cuLimit: 500,
+      cuLimit: 150_000,
     };
     const a = buildSignedMemoTx({ ...args, memo: "memo a" });
     const b = buildSignedMemoTx({ ...args, memo: "memo b" });

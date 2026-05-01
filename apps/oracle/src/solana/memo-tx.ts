@@ -44,7 +44,18 @@ export interface BuildMemoTxArgs {
   payer: Keypair;
   /** Priority fee per CU in micro-lamports (§3.4.4 Helius estimate, capped). */
   priorityFeeMicroLamports: number;
-  /** CU limit; 500 per §3.4.4 buffer. */
+  /**
+   * CU limit. Default 150_000 — sized for the Memo program's actual
+   * per-byte cost on Solana 4.0 (~420 CU/byte, measured on devnet
+   * mainnet-beta; the 224-byte cycle memo consumes 93_889 CU). For
+   * our worst-case 312-byte TWAP memo that's ~131k CU; 150k gives
+   * ~14% headroom against future Memo program drift.
+   *
+   * The spec's original "500" estimate (§3.4.4) was orders of
+   * magnitude too low — left over from an older Solana runtime
+   * when `msg!` was much cheaper. The empirical CU/byte was
+   * observed in the Phase C devnet smoke test.
+   */
   cuLimit?: number;
 }
 
@@ -64,7 +75,7 @@ export function buildSignedMemoTx(args: BuildMemoTxArgs): SignedMemoTx {
     microLamports: args.priorityFeeMicroLamports,
   });
   const computeLimitIx = ComputeBudgetProgram.setComputeUnitLimit({
-    units: args.cuLimit ?? 500,
+    units: args.cuLimit ?? 150_000,
   });
 
   const memoIx = new TransactionInstruction({
