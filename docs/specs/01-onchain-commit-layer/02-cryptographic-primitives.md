@@ -257,12 +257,26 @@ from `observed_at` and adds noise without provenance value).
 **Field selection rationale:** included everything that describes
 **what we observed**: identity (5 ids), when (`observed_at`),
 provenance for the price (`raw_*`, `fx_rate_to_usd`,
-`price_usd_per_mg`), availability state, and source attestation
-(`scrape_*`, `http_status`, `raw_html_hash`). `raw_html_hash` is
-particularly load-bearing — it pins the source of the observation
-to a hash of the actual scraped HTML, so a third party can in
-principle re-scrape the same vendor URL and check the source matched
-what we saw.
+`price_usd_per_mg`), availability state, and the scraper's own
+self-report (`scrape_*`, `http_status`, `raw_html_hash`).
+
+**About `raw_html_hash`** (important — the column name is misleading):
+in v1, this field is a **128-bit truncated SHA-256 fingerprint of
+already-parsed observation fields**, not a hash of any raw HTML or
+HTTP response body. The WooCommerce scrapers compute it from
+`{id, price, currency, in_stock, variant}` (see
+`apps/scraper/src/suppliers/woocommerce.ts:287-297`); the Cayman
+adapter uses the response payload but Cayman is `status='paused'`
+and produces no observations. Including this field in the leaf
+serves only as a **tamper-detection checksum for the parsed row** —
+if any of the five inputs are altered after the observation is
+written, the stored hash mismatches. It does **not** serve as a
+re-scrapable source attestation. A verifier holding the row's parsed
+fields can trivially recompute the hash; conversely, an attacker who
+can mutate the row can also mutate the hash. The cryptographic
+property the v1 leaf delivers is **database-integrity attestation**,
+not vendor-page attestation. See §4.7 for the full trust-model
+discussion and §4.7.2 for the v2 roadmap on real source attestation.
 
 **Integer ids** fit safely in JSON's 2⁵³ budget for our scale and
 are written as JSON integers, not strings. If we ever cross 2⁵³ for
@@ -435,15 +449,144 @@ observation_count=4):
 {"completed_at":"2026-05-01T12:00:09.000Z","cycle_id":200,"merkle_root":"0x9c0516afa29a523ee901e26fd372c285d273671b5e08e7be606d6b8e8d22789e","observation_count":4,"started_at":"2026-05-01T12:00:00.000Z","type":"cycle","v":1}
 ```
 
-A verifier with observation 3 and the cycle commit can ask the API
-(§6) for the Merkle proof for `observation_id=1003`. The returned
-proof is `[{ position: "left", hash: L4 }, { position: "left", hash:
-N12 }]` — by hashing L3 with its sibling at each level (carefully
-ordering left/right based on the position field) the verifier
-arrives at the same `0x9c0516…` root that was anchored on Solana,
-and can confirm the on-chain memo's `merkle_root` matches.
+A verifier with observation 3 (in its current Postgres form) and
+the cycle commit can ask the API (§6) for the Merkle proof for
+`observation_id=1003`. The returned proof is
+`[{ position: "left", hash: L4 }, { position: "left", hash: N12 }]`
+— by hashing L3 with its sibling at each level (carefully ordering
+left/right based on the position field) the verifier arrives at the
+same `0x9c0516…` root that was anchored on Solana, and can confirm
+the on-chain memo's `merkle_root` matches.
 
-### 4.7 Implementation notes (non-normative)
+What this proves: **the row in the database today is byte-for-byte
+the row that was committed at the time of the cycle commit.** What
+it does not prove: that the underlying vendor page actually said
+what we recorded. The `raw_html_hash` field in the leaf is a
+parsed-fields checksum (see §4.2 caveat and §4.7), not a re-scrapable
+artifact. v1 anchors database state; vendor-page attestation is a
+candidate v2 protocol bump (§4.7.2).
+
+### 4.7 Trust model and v2 roadmap
+
+This section nails down what v1 commits actually prove, what they
+don't, and what we'd need to change to extend the trust property.
+Worth being explicit so consumers of the oracle (a smart contract,
+a UI, an auditor) calibrate how much they're trusting.
+
+#### 4.7.1 What v1 attests: database integrity
+
+After a cycle commit lands on Solana, anyone holding the
+`supplier_observations` rows for that cycle can prove that the rows
+in the database **are byte-for-byte the rows that existed at the
+moment of the commit**. The Merkle root binds the canonical leaf
+form of each row; the on-chain memo binds the root, the
+`observation_count`, and the cycle timestamps. If any field of any
+included row is altered post-commit (price changed, timestamp
+backdated, supplier swapped, anything), the leaf hash changes, the
+root changes, and the on-chain Memo doesn't match.
+
+Symmetrically: if anyone — including the operator — wanted to
+**rewrite history**, they'd need to forge a Solana signature and
+backdate the slot, both of which are infeasible given the chain's
+tamper-evidence guarantees.
+
+So v1 protects against:
+- Silent post-hoc edits to observation rows
+- Selective deletion of inconvenient observations from a committed cycle
+- Re-ordering the dataset to influence downstream TWAPs
+- Operator equivocation (different rows shown to different consumers)
+
+#### 4.7.2 What v1 does NOT attest: vendor-page truth
+
+v1 commits do **not** prove that the rows we wrote down accurately
+reflect what the vendor's website said. The `raw_html_hash` field
+in the leaf — despite the name — is a 128-bit truncated SHA-256
+over a small JSON of parsed fields (`id`, `price`, `currency`,
+`in_stock`, `variant`), not a hash of the actual HTTP response body.
+A third party can't take a vendor URL, fetch it, hash the response,
+and check it against `raw_html_hash` because the two values aren't
+derived from the same input.
+
+Source attestation is the natural v2 protocol bump. The shape would
+be: replace or supplement `raw_html_hash` with a `raw_response_hash`
+that's the SHA-256 (full 256 bits) of the canonicalized HTTP response
+body the scraper saw. "Canonicalized" because vendor responses
+include variable elements (session ids, server timestamps, ads) that
+need stripping before hashing or every fetch produces a different
+hash. WooCommerce JSON responses (`/wp-json/wc/store/v1/products/<id>`)
+are far more deterministic than HTML and are a reasonable starting
+point — a v2 design pass would specify exactly which response fields
+go into the canonical form, mirroring §4.2's approach for
+observations. Until that lands, v1 callers should not advertise
+"verifiable against vendor pages" as a property of the oracle.
+
+#### 4.7.3 Truncation and collision resistance
+
+`raw_html_hash` is **128 bits** (32 hex characters), produced by
+truncating a full 256-bit SHA-256 output. Collision resistance for
+a 128-bit hash is bounded at roughly `2^64` operations under the
+birthday bound — i.e. an attacker would need on the order of 18
+quintillion hash computations to find any collision. That's
+comfortably above any plausible attacker budget at our scale, and
+adequate for the tamper-detection role this field plays in §4.7.1.
+
+If v2 promotes the field to a real source attestation, it should
+also widen the hash to the full 256 bits. The 128-bit truncation
+exists in v1 only to keep the legacy `supplier_observations` schema
+compact; once we're committing source bytes, the storage cost of a
+real 256-bit hash is trivial.
+
+The Merkle leaf hash (§4.3) and tree node hash (§4.4) are the **full**
+256-bit SHA-256 outputs. Only `raw_html_hash` is truncated; the
+crypto-anchoring primitives are full-width.
+
+### 4.8 Operational note: vendor status hygiene
+
+**This section flags an operational concern, not a protocol rule —
+but it affects what shows up in commits, so it's worth pinning here
+so the database schema and committer-service specs don't paper over
+it.**
+
+Two suppliers — `BACHEM` and `SIGMA` — have `suppliers.status =
+'active'` but produce **zero successful observations** because of
+anti-bot blocks from datacenter IPs. Last 24h: 363 attempts each,
+all failed (no `raw_html_hash`, no price, no availability). They've
+been documented as "paused" in `apps/scraper/src/suppliers/index.ts`
+comments since 0019, but the database column wasn't updated.
+
+Consequences if left as-is:
+
+- The committer's "active vendor" filter (when computing things like
+  cycle observation counts or vendor leaderboards) sees them as
+  contributors and reports thin or zero coverage from them.
+- The cycle commit memo's `observation_count` is unaffected (it
+  counts actual rows, not expected rows), but downstream analytics
+  may misreport.
+- BACHEM/SIGMA never appear in cycle commits because failed scrapes
+  produce observations that don't carry a `raw_html_hash` — and
+  the leaf canonical form requires every field present, including
+  `raw_html_hash`. Failed-scrape rows would need a separate handling
+  decision (commit them as failure attestations? skip them?). The
+  natural answer in v1 is **skip** — the cycle commits represent
+  successful observations, and failures don't carry any market data
+  worth anchoring.
+
+Recommended cleanup before the committer ships:
+
+1. `update public.suppliers set status = 'paused' where code in
+   ('BACHEM', 'SIGMA');` — bring the DB in line with the operational
+   reality. Cayman is already paused; same treatment for the other
+   two.
+2. Confirm the committer service treats failed-scrape rows
+   (`scrape_success = false`) as ineligible for cycle commits. The
+   observation_count in the memo should include only successful
+   rows — those whose canonical leaf is well-defined.
+
+This is filed here so the database schema spec (§1, written next)
+treats `commit_observations` as a successful-rows-only join and
+doesn't need to special-case anti-bot-blocked vendors.
+
+### 4.9 Implementation notes (non-normative)
 
 These don't change the spec but help anyone building it:
 
