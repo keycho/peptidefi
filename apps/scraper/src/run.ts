@@ -36,7 +36,7 @@ export interface CycleSummary {
   attempted: number;
   succeeded: number;
   failed: number;
-  status: "success" | "partial" | "failed";
+  status: "completed" | "partial" | "failed";
   errorSummary: string | null;
   durationMs: number;
   /** True when SCRAPER_USE_PROXY=true and the API key is set. */
@@ -146,8 +146,14 @@ export async function runOnce(): Promise<CycleSummary> {
     }
   }
 
+  // 'completed' matches the spec §3.2.2 / oracle findUnanchoredCycle
+  // status filter. (Earlier versions wrote 'success' here, which the
+  // oracle's status IN ('completed','partial') gate silently rejected
+  // — so a fully-successful cycle was never picked up for commit.
+  // 'completed' is the canonical name throughout the spec; this now
+  // matches.)
   const status: CycleSummary["status"] =
-    failed === 0 ? "success" : succeeded === 0 ? "failed" : "partial";
+    failed === 0 ? "completed" : succeeded === 0 ? "failed" : "partial";
 
   const errorSummary = errors.length > 0 ? errors.join(" | ") : null;
 

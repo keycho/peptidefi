@@ -30,7 +30,7 @@ function numToNumber(v: Numeric | null): number | null {
   return v === null ? null : Number(v);
 }
 
-export type RunStatus = "running" | "success" | "partial" | "failed";
+export type RunStatus = "running" | "completed" | "partial" | "failed";
 
 /**
  * Open a scraper_runs row at the start of a cycle. Returns the new row's id
