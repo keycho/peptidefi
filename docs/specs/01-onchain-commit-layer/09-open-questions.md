@@ -455,8 +455,13 @@ WHERE code IN ('BACHEM', 'SIGMA');
 ```
 
 - [ ] Apply against the new Supabase project (per §9.4.1)
-- [ ] Confirm the committer's eligibility filter (§3.2.2)
-      consistently excludes their failed-scrape rows
+- [x] **Resolved.** Failed-scrape rows ARE included in cycle commits
+      (trust-maximalist position — operator cannot hide vendor
+      failures from on-chain record). The committer's
+      `fetchCycleObservations` (§3.2.2) does not filter on
+      `scrape_success`; BACHEM/SIGMA failed rows commit on-chain as
+      failure attestations with `raw_html_hash=null` and
+      `scrape_error` populated. See §4.8 for the rationale.
 
 ### 9.4.3 Helius account setup
 

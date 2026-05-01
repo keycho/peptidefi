@@ -15,12 +15,15 @@ import type { Observation } from "../canonical";
  *     Returns at most one row (the oldest); the caller processes
  *     cycles serially per §3.2.1.
  *
- *   - fetchCycleObservations: all in-leaf-eligible observations for a
- *     cycle. Ordered by id ASC (matches §02.4.5 Merkle leaf order so
- *     downstream code doesn't need to re-sort). Filters to
- *     scrape_success = true — failed-scrape rows are deliberately
- *     ineligible per §02.4.8 (they have no raw_html_hash, the
- *     canonical leaf would be undefined-valued).
+ *   - fetchCycleObservations: ALL observations for a cycle, including
+ *     failed scrapes (`scrape_success=false`). Ordered by id ASC
+ *     (matches §02.4.5 Merkle leaf order so downstream code doesn't
+ *     need to re-sort). Trust-maximalist position per §02.4.8: the
+ *     operator MUST NOT be able to hide failed scrapes from the
+ *     on-chain record. A 403/timeout is itself an attestation that
+ *     the oracle attempted the scrape at the cycle timestamp; the
+ *     canonical leaf is still well-defined (raw_html_hash=null is a
+ *     valid value).
  *
  *   - findInFlightCycles: status='pending' OR 'submitted' rows for the
  *     recovery poll (§3.2.3). Used by Phase C to reconcile rows whose
@@ -80,14 +83,16 @@ export async function findUnanchoredCycle(
 }
 
 /**
- * Fetch all in-leaf-eligible observations for a given cycle, in
+ * Fetch ALL observations for a given cycle (successful + failed) in
  * canonical Observation form (ready to feed buildMerkleTree directly).
  *
- * Filters:
- *   scrape_success = true       — failed scrapes have no canonical leaf
- *   ordered by id ASC           — matches §02.4.5 leaf ordering
+ * No scrape_success filter (§02.4.8 trust-maximalist): failed scrapes
+ * are still committed on-chain. Their canonical leaves carry
+ * raw_html_hash=null + scrape_error populated; the operator cannot
+ * hide vendor failures from the on-chain record.
  *
- * The canonical-form transformation happens in the adapter
+ * Ordered by id ASC — matches §02.4.5 leaf ordering. The
+ * canonical-form transformation happens in the adapter
  * (rowToObservation) immediately on read, so the caller doesn't see
  * raw PG types.
  */
@@ -115,7 +120,6 @@ export async function fetchCycleObservations(
            raw_html_hash
     FROM   public.supplier_observations
     WHERE  scraper_run_id = ${cycleId}
-      AND  scrape_success = true
     ORDER BY id ASC
   `;
   return rows.map(rowToObservation);

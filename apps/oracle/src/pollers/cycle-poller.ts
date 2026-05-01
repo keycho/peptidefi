@@ -82,8 +82,8 @@ async function processOneCycle(opts: CyclePollerOptions): Promise<void> {
     // observations were deleted between detection and fetch (rare but
     // possible in test scenarios).
     console.log(
-      `[cycle-poller] cycle_id=${cycle.cycle_id} has zero successful ` +
-        `observations; skipping (would be a no-commit per §02.4.5)`,
+      `[cycle-poller] cycle_id=${cycle.cycle_id} has zero observations; ` +
+        `skipping (no-commit per §02.4.5)`,
     );
     return;
   }

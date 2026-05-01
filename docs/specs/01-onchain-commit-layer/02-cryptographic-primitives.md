@@ -393,11 +393,21 @@ lowercase hex chars wherever it appears in JSON.
 ### 4.6 Worked example
 
 Four real observations from a hypothetical cycle (cycle_id=200,
-peptide BPC157 across four suppliers). For brevity I show the
-canonical body of leaf 1 in full, then the bytes of all four leaf
-hashes and the tree above them. **All hashes here are real
-SHA-256 outputs** of the bytes shown — recompute them in any
-language to verify.
+peptide BPC157 across four suppliers). Three are successful scrapes
+(obs 1, 2, 3) and **one is a failed scrape (obs 4, vendor returned
+403)** — included deliberately to demonstrate canonical handling of
+failed-scrape rows. Per §4.8, the committer commits ALL observations
+in a cycle, successful or not; failed scrapes are themselves
+informational and the canonical leaf is well-defined when their
+nullable fields are `null` (per §2.7 NULL handling). An
+implementation that filters out failed-scrape rows before tree
+construction will produce a different root for this input set and
+is non-conformant with the trust-maximalist position §4.8 takes.
+
+For brevity I show the canonical body of leaf 1 in full, then the
+bytes of all four leaf hashes and the tree above them. **All hashes
+here are real SHA-256 outputs** of the bytes shown — recompute them
+in any language to verify.
 
 **Observation 1 canonical form** (sorted keys, no whitespace):
 
@@ -591,29 +601,33 @@ Consequences if left as-is:
 - The cycle commit memo's `observation_count` is unaffected (it
   counts actual rows, not expected rows), but downstream analytics
   may misreport.
-- BACHEM/SIGMA never appear in cycle commits because failed scrapes
-  produce observations that don't carry a `raw_html_hash` — and
-  the leaf canonical form requires every field present, including
-  `raw_html_hash`. Failed-scrape rows would need a separate handling
-  decision (commit them as failure attestations? skip them?). The
-  natural answer in v1 is **skip** — the cycle commits represent
-  successful observations, and failures don't carry any market data
-  worth anchoring.
+- BACHEM/SIGMA do appear in cycle commits as failure attestations.
+  Their failed-scrape rows commit with `raw_html_hash=null`,
+  `scrape_success=false`, and `scrape_error` populated. This is the
+  trust-maximalist position: the operator MUST NOT be able to hide
+  vendor failures (or anti-bot blocks) from the on-chain record. A
+  403 at a given timestamp is itself an attestation that the oracle
+  attempted the scrape — material evidence about vendor reachability
+  that downstream consumers (and the operator's own auditors) need
+  to see. The canonical leaf is well-defined for failed rows: every
+  field is still present, with `null` for the columns that have no
+  value (`raw_html_hash`, `raw_price`, `raw_currency`,
+  `fx_rate_to_usd`, `price_usd_per_mg`, `raw_availability`).
 
-Recommended cleanup before the committer ships:
+Cleanup before the committer ships:
 
 1. `update public.suppliers set status = 'paused' where code in
    ('BACHEM', 'SIGMA');` — bring the DB in line with the operational
    reality. Cayman is already paused; same treatment for the other
-   two.
-2. Confirm the committer service treats failed-scrape rows
-   (`scrape_success = false`) as ineligible for cycle commits. The
-   observation_count in the memo should include only successful
-   rows — those whose canonical leaf is well-defined.
+   two. **Note:** pausing a supplier stops the scraper from generating
+   *new* observations for it, but does not exclude the supplier's
+   historical or in-flight rows from cycle commits — those remain
+   eligible per §4.6.
 
-This is filed here so the database schema spec (§1, written next)
-treats `commit_observations` as a successful-rows-only join and
-doesn't need to special-case anti-bot-blocked vendors.
+2. The committer's `fetchCycleObservations` query (§3.2.2) MUST NOT
+   filter on `scrape_success`. The cycle's `observation_count` in
+   the memo is the total row count for the cycle, including failures.
+   `commit_observations` is therefore an *all-rows* junction.
 
 ### 4.9 Implementation notes (non-normative)
 
