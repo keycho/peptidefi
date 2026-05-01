@@ -1,5 +1,4 @@
 import "dotenv/config";
-import { sleepInterruptible } from "@peptide-oracle/shared";
 import { loadConfig, type OracleConfig } from "./config";
 import {
   buildInitialState,
@@ -10,19 +9,21 @@ import { createSqlClient, type SqlClient } from "./db/client";
 import { acquireOracleLock, type AdvisoryLockHandle } from "./advisory-lock";
 import { runCyclePoller } from "./pollers/cycle-poller";
 import { runLongTailPoller } from "./pollers/long-tail-poller";
+import { runTwapPoller } from "./pollers/twap-poller";
 import { OracleSolanaClient } from "./solana/client";
 import { loadOracleKeypair } from "./solana/keypair";
 
 /**
  * peptide-oracle on-chain commit service — entry point.
  *
- * Phase C build: the cycle poller now drives the full lifecycle —
- * detect → write 'pending' → submit to Solana → poll for
- * finalization → mark 'finalized'. The long-tail retry poller
- * picks up rows whose in-flight retry budget was exhausted (§3.7.7).
- *
- * Remaining ticket sequence:
- *   - TWAP poller (still heartbeat-only)
+ * Phase D build: both pollers now drive their full lifecycles —
+ * cycle commits (every ~30s detect, hourly cadence determined by
+ * the worker) and TWAP commits (per-peptide, hourly at HH:00:30 UTC
+ * per §3.3). Both feed the same Solana submission machinery and
+ * obey the same retry/finalization rules. The long-tail retry
+ * poller picks up rows whose in-flight retry budget was exhausted
+ * (§3.7.7) — currently scoped to commit_cycles only; a follow-up
+ * extends it to twap_commits if needed.
  *
  * What this file does:
  *
@@ -34,15 +35,13 @@ import { loadOracleKeypair } from "./solana/keypair";
  *      (§03.5.2) — refuse to start if not.
  *   4. Stand up the /health endpoint with the §03.9.2 required-field
  *      shape, served from a mutable in-memory state object.
- *   5. Run the cycle poller, long-tail retry poller, and a
- *      heartbeat-only TWAP poller concurrently.
+ *   5. Run cycle poller, TWAP poller, and long-tail retry poller
+ *      concurrently. All three share the same Solana client and SQL
+ *      pool; the advisory lock guarantees single-instance for the
+ *      whole process.
  *   6. Honor SIGTERM / SIGINT — abort the inter-cycle sleep, let any
  *      in-flight cycle finish writing, release the advisory lock,
  *      close the pool + health server, exit 0.
- *
- * Deliberately NOT here yet (per ticket scope):
- *
- *   - TWAP commit logic. Later ticket.
  */
 
 let config: OracleConfig;
@@ -77,24 +76,6 @@ function requestShutdown(signal: string): void {
 }
 process.on("SIGINT", () => requestShutdown("SIGINT"));
 process.on("SIGTERM", () => requestShutdown("SIGTERM"));
-
-// ─── TWAP heartbeat (placeholder — lands in a later ticket) ────────────
-
-async function twapPollerHeartbeat(): Promise<void> {
-  console.log(
-    `[startup] twap poller heartbeat-only ` +
-      `(interval=${config.poll.twapIntervalMs}ms; TWAP commit logic lands after cycle ticket)`,
-  );
-  let tick = 0;
-  while (!stopRequested) {
-    tick += 1;
-    // Placeholder for: at HH:00:30 UTC, for each is_active=true peptide,
-    // commit the latest peptide_twaps row. See §03.3.
-    console.log(`[twap] heartbeat tick=${tick}`);
-    if (stopRequested) break;
-    await sleepInterruptible(config.poll.twapIntervalMs, shutdownAbort.signal);
-  }
-}
 
 // ─── Main ──────────────────────────────────────────────────────────────
 
@@ -200,7 +181,16 @@ async function main(): Promise<void> {
         abortSignal: shutdownAbort.signal,
         maxTotalRetries: config.retry.maxTotalRetries,
       }),
-      twapPollerHeartbeat(),
+      runTwapPoller({
+        sql,
+        tickIntervalMs: config.poll.twapIntervalMs,
+        abortSignal: shutdownAbort.signal,
+        health,
+        solana,
+        payer,
+        minBalanceLamports,
+        confirmationTimeoutMs: config.confirmation.timeoutMs,
+      }),
     ]);
     console.log("[shutdown] all pollers exited; closing health server");
   } finally {

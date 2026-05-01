@@ -146,3 +146,27 @@ export const SPEC_CYCLE_MEMO_JSON =
   '{"completed_at":"2026-05-01T12:00:09.000Z","cycle_id":200,"merkle_root":"0x100eeb8fabe2d1cb200324e8ccbcc3ead12cfa18224a744cbe11d813dcb32af8","observation_count":118,"started_at":"2026-05-01T12:00:00.000Z","type":"cycle","v":1}';
 
 export const SPEC_CYCLE_MEMO_BYTES = 226;
+
+/**
+ * Reference TWAP commit memo from §02.2.3. The example uses
+ * peptide BPC157 and an observation_set_root reused from §02.4.6
+ * for visual continuity (NOT the real Merkle root over the BPC157
+ * observations — the spec deliberately picks a known-named root
+ * to keep the examples cross-referenceable).
+ *
+ * Size: 312 bytes UTF-8 per the §02.2.3 spec text.
+ */
+export const SPEC_TWAP_MEMO_INPUT = {
+  algo: "filtered_median_v1",
+  peptide_code: "BPC157",
+  twap_value: "5.998000",
+  computed_at: "2026-05-01T12:00:00.000Z",
+  window_start: "2026-05-01T11:00:00.000Z",
+  window_end: "2026-05-01T12:00:00.000Z",
+  observation_set_root: SPEC_ROOT,
+} as const;
+
+export const SPEC_TWAP_MEMO_JSON =
+  '{"algo":"filtered_median_v1","computed_at":"2026-05-01T12:00:00.000Z","observation_set_root":"0x100eeb8fabe2d1cb200324e8ccbcc3ead12cfa18224a744cbe11d813dcb32af8","peptide_code":"BPC157","twap_value":"5.998000","type":"twap","v":1,"window_end":"2026-05-01T12:00:00.000Z","window_start":"2026-05-01T11:00:00.000Z"}';
+
+export const SPEC_TWAP_MEMO_BYTES = 312;

@@ -97,7 +97,7 @@ peptide subset).
 | `computed_at`           | string  | `peptide_twaps.computed_at` in canonical timestamp form.                                 |
 | `window_start`          | string  | `peptide_twaps.window_start` in canonical timestamp form.                                |
 | `window_end`            | string  | `peptide_twaps.window_end` in canonical timestamp form.                                  |
-| `observation_set_root`  | string  | `0x` + 64 hex. Merkle root over the observations that fed this TWAP — see §2.6.          |
+| `observation_set_root`  | string  | `0x` + 64 hex. Merkle root over the observations that fed this TWAP — same construction as the cycle commit's `merkle_root` (§4 of this doc): leaves are full 17-field canonical observations (§4.2), domain-separated SHA-256 (§4.3), Bitcoin-style odd duplication (§4.5). Reusing the cycle-commit Merkle leaf shape means a verifier needs only one hashing function for both commit kinds. The set is exactly the rows in `peptide_twaps.input_observation_ids` (i.e. the worker's filtered set: latest-per-supplier within freshness, scrape_success=true, in_stock). |
 
 **About `algo`** (added during review): the field identifies which
 TWAP algorithm produced `twap_value`. v1 ships a single algorithm,
