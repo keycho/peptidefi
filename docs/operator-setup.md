@@ -102,7 +102,7 @@ and capture three values:
 ### Apply migrations
 
 The repo's migrations need to run against the new project. From
-your local clone of the `peptide-oracle-pivot` branch:
+your local clone of the `main` branch:
 
 - [ ] Install the Supabase CLI: https://supabase.com/docs/guides/cli/getting-started
 - [ ] Link the local repo to the new project:
@@ -532,8 +532,7 @@ implementation.
       https://railway.app/.
 
 - [ ] **New service → Deploy from GitHub repo**. Select the
-      `keycho/peptidefi` repo (or whatever the repo name resolves
-      to after the rename) and the `peptide-oracle-pivot` branch.
+      `keycho/peptide-oracle` repo and the `main` branch.
 
 - [ ] **Service name**: `peptide-oracle-oracle` (matches the
       naming pattern of the existing services).
@@ -741,8 +740,7 @@ pubkey before the §9.5.5 pre-mainnet gate.
 ### Channel A: GitHub repo
 
 - [ ] In the public repo, create
-      `docs/oracle-authority.md` on the default branch (or
-      `peptide-oracle-pivot` until merge).
+      `docs/oracle-authority.md` on the default branch (`main`).
 - [ ] Content (template):
 
       ```markdown
@@ -797,10 +795,10 @@ pubkey before the §9.5.5 pre-mainnet gate.
       Authority pubkey: <YOUR_PUBKEY>
 
       Verifiers: confirm against GitHub
-      <https://github.com/<org>/<repo>/blob/main/docs/oracle-authority.md>
+      <https://github.com/keycho/peptide-oracle/blob/main/docs/oracle-authority.md>
       and our docs <https://docs.<your-domain>/authority>.
 
-      Spec: <https://github.com/<org>/<repo>/tree/main/docs/specs/01-onchain-commit-layer>
+      Spec: <https://github.com/keycho/peptide-oracle/tree/main/docs/specs/01-onchain-commit-layer>
       ```
 
 - [ ] Pin the post to the project account.
@@ -834,10 +832,9 @@ pubkey before the §9.5.5 pre-mainnet gate.
   and last 4 characters across channels.
 - **Pinning the wrong tweet.** The Twitter UI pin/unpin can be
   fiddly. Verify the pin sticks across a refresh.
-- **GitHub commit on the wrong branch.** If `oracle-authority.md`
-  exists only on `peptide-oracle-pivot` and the project's default
-  branch is still the old one, verifiers reading from default
-  branch see nothing. Confirm what branch readers will read from.
+- **GitHub commit on the wrong branch.** Always commit to `main`
+  (the default branch). Verifiers fetch from default; commits on
+  feature branches are invisible to them.
 
 ---
 
@@ -941,3 +938,55 @@ The §9.5 checklist requires the apps/oracle implementation to
 exist, so #5 (Railway service) won't be fully testable until
 implementation tickets are done. Until then, prerequisites #1–#4
 and #6–#8 are all standalone-completable.
+
+---
+
+## Handoff notes (post-consolidation cleanup)
+
+The repo went through a consolidation pass that left a couple of
+loose ends the operator should clean up on a defined schedule.
+
+### Delete `claude/peptidefi-season-1-Hae69` after one week
+
+This branch was the de facto production branch during the
+biohack.market era. After the consolidation it's stale and points
+to commit `cac7840` (the final biohack-era CORS fix). The week-long
+holding period gives time to:
+
+- Confirm nothing in personal notes / external bookmarks references
+  the old branch name
+- Spot-check that the Railway deploy didn't have any auto-tracked
+  ref tied to that branch (it's already been deleted, but worth
+  confirming no other infra silently depended on it)
+- Let any GitHub Actions / webhooks settled into the new branch
+  layout
+
+After the week, delete via:
+
+```
+# locally
+git branch -D claude/peptidefi-season-1-Hae69
+
+# remotely (via GitHub Settings → Branches, since the local proxy
+# in this environment can't push branch deletions; or via gh CLI
+# from operator's machine):
+gh api -X DELETE repos/keycho/peptide-oracle/git/refs/heads/claude/peptidefi-season-1-Hae69
+```
+
+Document the deletion date in the project's operations log.
+
+### Delete `peptide-oracle-pivot` from origin
+
+This branch was renamed to `main` during the consolidation but the
+old `origin/peptide-oracle-pivot` ref still exists (the
+sandbox-internal git proxy returned 403 on `--delete`, so it was
+left for the operator to clean up). Both refs point to the same
+commit; harmless to leave temporarily.
+
+Delete via GitHub Settings → Branches alongside the default-branch
+flip, or via:
+
+```
+# Once the operator has direct gh CLI access to the renamed repo:
+gh api -X DELETE repos/keycho/peptide-oracle/git/refs/heads/peptide-oracle-pivot
+```
