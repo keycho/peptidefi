@@ -11,7 +11,7 @@
 -- to the existing one).
 --
 -- Three tables + one enum:
---   public.commit_status         enum (pending | submitted | confirmed | failed)
+--   public.commit_status         enum (pending | submitted | finalized | failed)
 --   public.commit_cycles         one row per scrape cycle anchored on Solana
 --   public.twap_commits          one row per TWAP commit
 --   public.commit_observations   junction: observation ↔ cycle + leaf hash
@@ -31,8 +31,8 @@ begin
   if not exists (select 1 from pg_type where typname = 'commit_status') then
     create type public.commit_status as enum (
       'pending',     -- row inserted, no submission attempt yet
-      'submitted',   -- tx sent to RPC, awaiting confirmation
-      'confirmed',   -- landed in a slot; signature + slot populated
+      'submitted',   -- tx sent to RPC, awaiting finalization
+      'finalized',   -- finality reached on-chain; signature + slot populated
       'failed'       -- exhausted retry budget; last_error populated
     );
   end if;
@@ -58,7 +58,7 @@ create table if not exists public.commit_cycles (
                      check (solana_slot is null or solana_slot > 0),
   status             public.commit_status not null default 'pending',
   submitted_at       timestamptz,
-  confirmed_at       timestamptz,
+  finalized_at       timestamptz,
   retry_count        integer not null default 0 check (retry_count >= 0),
   last_error         text,
   created_at         timestamptz not null default now()
@@ -69,7 +69,7 @@ create index if not exists idx_commit_cycles_status
 create index if not exists idx_commit_cycles_completed_at
   on public.commit_cycles (completed_at desc);
 -- Partial index on non-terminal rows for the committer's polling
--- query. Stays bounded to in-flight work; confirmed/failed rows
+-- query. Stays bounded to in-flight work; finalized/failed rows
 -- fall out automatically on update.
 create index if not exists idx_commit_cycles_pending_work
   on public.commit_cycles (created_at)
@@ -105,7 +105,7 @@ create table if not exists public.twap_commits (
                         check (solana_slot is null or solana_slot > 0),
   status                public.commit_status not null default 'pending',
   submitted_at          timestamptz,
-  confirmed_at          timestamptz,
+  finalized_at          timestamptz,
   retry_count           integer not null default 0 check (retry_count >= 0),
   last_error            text,
   created_at            timestamptz not null default now()

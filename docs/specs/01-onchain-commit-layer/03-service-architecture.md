@@ -10,7 +10,7 @@ This section depends on §01 (database schema, locked) and §02
 
 - Where the service lives in the workspace
 - How it detects ready-to-commit work
-- What happens between "row appears in DB" and "tx confirmed on Solana"
+- What happens between "row appears in DB" and "tx finalized on Solana"
 - How failures are retried, recovered, and bounded
 - How the keypair is stored, monitored, and rotated
 - What the operator sees when something goes wrong
@@ -223,8 +223,8 @@ moves to the next peptide.
 5. Insert `twap_commits` row (status=`pending`) inside a DB transaction
 6. Submit Solana tx (§3.4)
 7. Update row to `submitted`, set `solana_signature`
-8. Wait for confirmation
-9. Update row to `confirmed`, set `solana_slot` and `confirmed_at`
+8. Wait for finalization (§3.4.6)
+9. Update row to `finalized`, set `solana_slot` and `finalized_at`
 
 The unique constraint on `(peptide_code, computed_at)` (§01.2) makes
 step 5 idempotent: a re-run after crash hits the existing row, and
@@ -375,12 +375,11 @@ return Timeout
 Defaults: `CONFIRMATION_TIMEOUT = 90s`, `CONFIRMATION_POLL_INTERVAL = 3s`.
 A 90s budget covers `finalized` comfortably even under congestion —
 typical latency is ~13s, observed worst case during heavy load is
-~30–45s. The `'confirmed'` short-circuit return is intentionally
-omitted; we wait for full finality before transitioning the row's
-`status` column to `confirmed` in the DB. (The DB enum value
-`'confirmed'` is reused here to mean "finality reached on-chain";
-it's a bit of a name collision but renaming it would churn §01 +
-§02 cross-references for no semantic gain.)
+~30–45s. The `'confirmed'` short-circuit return (Solana RPC
+commitment level) is intentionally omitted; we wait for full
+finality before transitioning the row's `status` column to
+`finalized` in the DB. The DB enum value name matches the Solana
+commitment level we're waiting on, so no naming collision.
 
 ## 3.5 Keypair management
 
@@ -586,7 +585,7 @@ deciding the retry path:
 | `BLOCKHASH_EXPIRED`         | "BlockhashNotFound" from validator                | refresh blockhash, immediate retry (no count increment) |
 | `INSUFFICIENT_SOL`          | hot wallet balance can't cover fee                | NO retry — immediate `failed` + critical alert         |
 | `INVALID_TRANSACTION`       | malformed tx, signature verification failure      | NO retry — immediate `failed` + page operator         |
-| `CONFIRMATION_TIMEOUT`      | tx submitted but not finalized within 90s        | reconcile (see §3.7.4); may transition to `confirmed`   |
+| `CONFIRMATION_TIMEOUT`      | tx submitted but not finalized within 90s        | reconcile (see §3.7.4); may transition to `finalized`   |
 | `SIGNATURE_ALREADY_EXISTS`  | duplicate submission detected                     | reconcile (see §3.7.5)                                  |
 
 The committer logs the original error, its classification, and
@@ -620,19 +619,20 @@ the audit trail). Reconciliation:
 
 ```
 1. Call getSignatureStatuses([signature]) one more time
-2. If confirmationStatus is 'confirmed' or 'finalized':
-     transition to confirmed, record slot
+2. If confirmationStatus is 'finalized':
+     transition to finalized, record slot
 3. If not found AND the blockhash has expired:
      classify as dropped
      transition status back to 'pending', clear signature
      retry per §3.7.1 (with fresh blockhash)
-4. If not found AND the blockhash is still valid:
+4. If not found AND the blockhash is still valid (or if status is
+   only 'confirmed' but not yet 'finalized'):
      wait one more 90s window, retry from step 1
 ```
 
 This avoids the "we resubmitted but the original landed too" double-commit hazard.
 
-### 3.7.5 Race: Solana confirmed but DB write failed
+### 3.7.5 Race: Solana finalized but DB write failed
 
 The pivotal race condition. Sequence the writes so this is
 recoverable:
@@ -644,8 +644,8 @@ recoverable:
 3. UPDATE row: signature='<sig>', status='submitted'
    (DB now knows the signature even before we know if it landed)
 4. sendTransaction
-5. Poll for confirmation
-6. UPDATE row: status='confirmed', solana_slot=<slot>, confirmed_at=now()
+5. Poll for finalization
+6. UPDATE row: status='finalized', solana_slot=<slot>, finalized_at=now()
 ```
 
 If step 6 fails (Postgres unreachable, oracle process killed):
@@ -653,7 +653,7 @@ If step 6 fails (Postgres unreachable, oracle process killed):
 - Row is left at status='submitted' with the signature recorded
 - On next poll, the recovery query (§3.2.3) picks it up
 - Reconciliation calls `getSignatureStatuses([signature])`
-  - Confirmed on chain → UPDATE row to 'confirmed', done
+  - Finalized on chain → UPDATE row to 'finalized', done
   - Not found / expired blockhash → handle per §3.7.4 (the tx
     was probably dropped between submit and DB write)
 
@@ -676,7 +676,7 @@ Idempotency at the DB layer makes this safe:
 ### 3.7.6 Re-orgs (not a concern at our commitment level)
 
 Per §3.4.5, every commit waits for `finalized` before transitioning
-to `confirmed` in the database. By the time we record the slot,
+to `finalized` in the database. By the time we record the slot,
 that slot is 31+ blocks deep and has cryptoeconomic finality —
 re-orgs at this depth would require a violation of Solana's safety
 guarantees, which has never occurred on mainnet. We do not need
@@ -763,14 +763,14 @@ Every commit attempt logs a structured record:
 - `cycle_commit_started cycle_id=<n> observation_count=<n>`
 - `cycle_commit_root_computed cycle_id=<n> root=<0x...>`
 - `cycle_commit_submitted cycle_id=<n> signature=<sig> retry=<n>`
-- `cycle_commit_confirmed cycle_id=<n> signature=<sig> slot=<n> elapsed_ms=<n>`
+- `cycle_commit_finalized cycle_id=<n> signature=<sig> slot=<n> elapsed_ms=<n>`
 - `cycle_commit_failed cycle_id=<n> class=<class> error=<msg> retry=<n>/5`
 
 Same shape for `twap_commit_*` events. Plus:
 
 - `balance_check public_key=<pk> balance_sol=<x>`
 - `rpc_error op=<op> error=<msg> latency_ms=<n>`
-- `recovery_reconcile cycle_id=<n> outcome=<confirmed|dropped|stuck>`
+- `recovery_reconcile cycle_id=<n> outcome=<finalized|dropped|stuck>`
 
 JSON-structured logs make grepping in Railway's log view tolerable;
 the project has been using plain key=value pairs elsewhere so we
@@ -892,7 +892,12 @@ during review:
 - **Confirmation level: `finalized`.** Confirmed (§3.4.5 was flipped
   from `confirmed` during review). Eliminates re-org risk entirely
   at the cost of ~8–10s additional latency, which is negligible
-  relative to the 30-second polling cadence.
+  relative to the 30-second polling cadence. Follow-up rename:
+  the DB enum value `'confirmed'` was renamed to `'finalized'` and
+  the `confirmed_at` timestamp column to `finalized_at` so the
+  schema names match the Solana commitment level we wait on (see
+  §01 schema spec + the migration file). Lifecycle is now
+  `pending → submitted → finalized | failed`.
 - **Priority fee strategy: dynamic via Helius's API, capped at
   50,000 micro-lamports/CU.** Confirmed.
 - **Keypair storage: Railway env var.** Confirmed for v1, subject

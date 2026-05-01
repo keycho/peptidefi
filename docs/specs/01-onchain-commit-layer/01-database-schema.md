@@ -60,12 +60,12 @@ committed in v1).
 | `merkle_root`       | text, not null        | `CHECK (~ '^0x[0-9a-f]{64}$')`. The 32-byte SHA-256 root from §02.4.5.           |
 | `memo_payload`      | text, not null        | Canonical JSON memo body that was sent on-chain (per §02.2.2). Stored verbatim for verification: a third party can re-canonicalize and compare. |
 | `solana_signature`  | text, nullable        | Base58 transaction signature. NULL until submitted.                              |
-| `solana_slot`       | bigint, nullable      | Confirmation slot. NULL until confirmed.                                         |
-| `status`            | enum `commit_status`  | `pending` → `submitted` → `confirmed` \| `failed`. Default `pending`.            |
+| `solana_slot`       | bigint, nullable      | Slot the transaction reached finality in. NULL until finalized.                  |
+| `status`            | enum `commit_status`  | `pending` → `submitted` → `finalized` \| `failed`. Default `pending`.            |
 | `submitted_at`      | timestamptz, nullable | Set when the committer hands the signed tx to the RPC.                           |
-| `confirmed_at`      | timestamptz, nullable | Set when confirmation arrives.                                                   |
+| `finalized_at`      | timestamptz, nullable | Set when on-chain finality is reached (per §03.4.5).                             |
 | `retry_count`       | integer, not null     | `CHECK (>= 0)`. Default 0. Increments on each retry attempt.                     |
-| `last_error`        | text, nullable        | Most recent error message, freeform. Cleared on successful confirmation.         |
+| `last_error`        | text, nullable        | Most recent error message, freeform. Cleared on successful finalization.         |
 | `created_at`        | timestamptz, not null | Default `now()`.                                                                 |
 
 **Indexes:**
@@ -78,7 +78,7 @@ PARTIAL IDX  (created_at) WHERE status IN ('pending', 'submitted')
 ```
 
 The partial index handles the committer's "give me the oldest
-non-terminal commit" poll. As rows transition to `confirmed` or
+non-terminal commit" poll. As rows transition to `finalized` or
 `failed` they drop out of the index, so it stays bounded by
 in-flight work.
 
@@ -110,7 +110,7 @@ One row per TWAP commit. v1 cadence: hourly per active peptide
 | `solana_slot`          | bigint, nullable      |                                                                                             |
 | `status`               | enum `commit_status`  | Same enum, same defaults.                                                                   |
 | `submitted_at`         | timestamptz, nullable |                                                                                             |
-| `confirmed_at`         | timestamptz, nullable |                                                                                             |
+| `finalized_at`         | timestamptz, nullable |                                                                                             |
 | `retry_count`          | integer, not null     | Default 0.                                                                                  |
 | `last_error`           | text, nullable        |                                                                                             |
 | `created_at`           | timestamptz, not null | Default `now()`.                                                                            |
@@ -192,8 +192,8 @@ deleted either.
 ```
 CREATE TYPE commit_status AS ENUM (
   'pending',     -- row inserted, no submission attempt yet
-  'submitted',   -- tx sent to RPC, awaiting confirmation
-  'confirmed',   -- landed in a slot; signature + slot populated
+  'submitted',   -- tx sent to RPC, awaiting finalization
+  'finalized',   -- finality reached on-chain; signature + slot populated
   'failed'       -- exhausted retry budget; last_error populated
 );
 ```
@@ -201,18 +201,19 @@ CREATE TYPE commit_status AS ENUM (
 State transitions (no other transitions are valid):
 
 ```
-   pending ──▶ submitted ──▶ confirmed   (happy path)
+   pending ──▶ submitted ──▶ finalized   (happy path)
       │           │
-      │           └─▶ pending             (retry: confirmation timeout)
+      │           └─▶ pending             (retry: finalization timeout)
       │
       └─▶ failed                          (after retry budget exhausted)
 ```
 
 The `submitted → pending` transition is for the case where a
-transaction was sent but never confirmed within the timeout. The
-committer reverts to `pending`, increments `retry_count`, refreshes
-the recent blockhash, and tries again. After N retries (the value
-lives in the service spec in §3), terminal `failed` is set.
+transaction was sent but never reached finality within the timeout.
+The committer reverts to `pending`, increments `retry_count`,
+refreshes the recent blockhash, and tries again. After N retries
+(the value lives in the service spec in §3), terminal `failed` is
+set.
 
 ## 1.5 RLS policy
 
@@ -298,11 +299,11 @@ Rationale:
   exactly that predicate makes the poll a tight index scan
   regardless of how big the historical table grows.
 - The index stays small: at any moment, in-flight commits are
-  typically a handful (one per cycle that hasn't confirmed yet, plus
-  any failures being retried). Confirmed and failed rows fall out of
+  typically a handful (one per cycle that hasn't finalized yet, plus
+  any failures being retried). Finalized and failed rows fall out of
   the index automatically when their status updates.
 - Combined with the full status index, queries that filter on
-  `status='confirmed'` for read paths still get an index plan via
+  `status='finalized'` for read paths still get an index plan via
   the non-partial index.
 
 The split (partial for hot poll path + full for read paths) is
@@ -326,8 +327,8 @@ Operational policy:
 - A retry job (§3) periodically scans `failed` rows and tries again
   on a generous backoff (e.g. once an hour for the first day, then
   daily). When such a retry succeeds, the row transitions
-  `failed → pending → submitted → confirmed` (incrementing
-  `retry_count`); `last_error` is cleared on confirmation.
+  `failed → pending → submitted → finalized` (incrementing
+  `retry_count`); `last_error` is cleared on finalization.
 - If we ever need to actually delete (storage pressure, data
   retention policy), do it as an explicit operator action with a
   date cutoff — not as part of the committer's normal flow.

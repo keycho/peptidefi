@@ -72,7 +72,7 @@ break if sections grow.
    where the committer lives in the workspace (new `apps/oracle` vs
    inside `apps/worker`), polling vs event model for cycle detection,
    keypair handling, RPC choice, retry strategy, write-then-update
-   pattern for the "Solana confirmed but DB write failed" race.
+   pattern for the "Solana finalized but DB write failed" race.
 4. **Merkle tree construction** —
    canonical observation serialization, hash function, leaf/internal
    domain separation, ordering, odd-count handling, output format.
