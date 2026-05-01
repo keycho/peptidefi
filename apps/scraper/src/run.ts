@@ -5,7 +5,7 @@ import {
   fetchFxRates,
   scrapeResultSchema,
   type ScrapeResult,
-} from "@peptidefi/shared";
+} from "@peptide-oracle/shared";
 import { chromium, type Browser } from "playwright";
 import {
   closeRun,

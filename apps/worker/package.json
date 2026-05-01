@@ -1,5 +1,5 @@
 {
-  "name": "@peptidefi/worker",
+  "name": "@peptide-oracle/worker",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -11,8 +11,8 @@
     "start": "tsx src/index.ts"
   },
   "dependencies": {
-    "@peptidefi/db": "workspace:*",
-    "@peptidefi/shared": "workspace:*",
+    "@peptide-oracle/db": "workspace:*",
+    "@peptide-oracle/shared": "workspace:*",
     "@supabase/supabase-js": "^2.45.4",
     "dotenv": "^16.4.5",
     "zod": "^3.23.8"

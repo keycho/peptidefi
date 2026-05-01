@@ -1,5 +1,5 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-import type { Database } from "@peptidefi/db";
+import type { Database } from "@peptide-oracle/db";
 
 /**
  * Service-role Supabase client for backend services (scraper, worker).
@@ -37,7 +37,7 @@ export function createAdminClient(): AdminClient {
       autoRefreshToken: false,
     },
     global: {
-      headers: { "x-peptidefi-service": "admin" },
+      headers: { "x-peptide-oracle-service": "admin" },
     },
   });
 }

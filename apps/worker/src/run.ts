@@ -2,7 +2,7 @@ import {
   type AdminClient,
   createAdminClient,
   type Numeric,
-} from "@peptidefi/shared";
+} from "@peptide-oracle/shared";
 import { computeTwap, type TwapInput } from "./twap";
 import { insertPeptideTwap, logOutliers } from "./persist";
 

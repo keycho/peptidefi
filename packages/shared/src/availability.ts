@@ -1,4 +1,4 @@
-import type { Database } from "@peptidefi/db";
+import type { Database } from "@peptide-oracle/db";
 
 /** Re-export the enum from the generated Database type for convenience. */
 export type AvailabilityTier =

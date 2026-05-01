@@ -6,7 +6,7 @@
 # Build context is the monorepo root (workspace deps resolve via pnpm
 # symlinks at install time):
 #
-#   docker build -t peptidefi-worker -f apps/worker/Dockerfile .
+#   docker build -t peptide-oracle-worker -f apps/worker/Dockerfile .
 
 FROM node:20-alpine
 
@@ -23,7 +23,7 @@ COPY apps/worker/package.json apps/worker/
 COPY packages/db/package.json packages/db/
 COPY packages/shared/package.json packages/shared/
 
-RUN pnpm install --frozen-lockfile --filter @peptidefi/worker... --prod=false
+RUN pnpm install --frozen-lockfile --filter @peptide-oracle/worker... --prod=false
 
 COPY tsconfig.base.json ./
 COPY apps/worker apps/worker

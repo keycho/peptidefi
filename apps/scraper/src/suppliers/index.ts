@@ -1,4 +1,4 @@
-import type { ScrapeResult } from "@peptidefi/shared";
+import type { ScrapeResult } from "@peptide-oracle/shared";
 import type { Browser } from "playwright";
 import { cayman } from "./cayman";
 import { createWooModule } from "./woocommerce";

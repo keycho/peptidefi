@@ -7,7 +7,7 @@ import {
   pctDiff,
   rateToUsd,
   type FxRates,
-} from "@peptidefi/shared";
+} from "@peptide-oracle/shared";
 
 /**
  * All Supabase writes for a scraper cycle live here. The runner orchestrates

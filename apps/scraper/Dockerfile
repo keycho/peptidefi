@@ -13,7 +13,7 @@
 # Build context is the monorepo root (workspace deps resolve via pnpm
 # symlinks at install time):
 #
-#   docker build -t peptidefi-scraper -f apps/scraper/Dockerfile .
+#   docker build -t peptide-oracle-scraper -f apps/scraper/Dockerfile .
 
 FROM node:20-alpine
 
@@ -35,7 +35,7 @@ COPY apps/scraper/package.json apps/scraper/
 COPY packages/db/package.json packages/db/
 COPY packages/shared/package.json packages/shared/
 
-RUN pnpm install --frozen-lockfile --filter @peptidefi/scraper... --prod=false
+RUN pnpm install --frozen-lockfile --filter @peptide-oracle/scraper... --prod=false
 
 # Layer 2: source. Cheap to invalidate.
 COPY tsconfig.base.json ./

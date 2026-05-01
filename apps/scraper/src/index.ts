@@ -3,7 +3,7 @@ import {
   type HealthState,
   sleepInterruptible,
   startHealthServer,
-} from "@peptidefi/shared";
+} from "@peptide-oracle/shared";
 import { runOnce } from "./run";
 
 /**

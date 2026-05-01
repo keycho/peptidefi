@@ -3,7 +3,7 @@ import {
   parseMassToMg,
   type ScrapeResult,
   type AvailabilityTier,
-} from "@peptidefi/shared";
+} from "@peptide-oracle/shared";
 import type { SupplierModule, ScrapeContext } from "./index";
 
 /**

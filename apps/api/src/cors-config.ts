@@ -6,7 +6,6 @@ import type { CorsOptions } from "cors";
  * Permitted origins:
  *   - http://localhost:3000  / http://localhost:5173      (local dev)
  *   - http://127.0.0.1:3000  / http://127.0.0.1:5173       (local dev, IP form)
- *   - https://biohack.market / https://www.biohack.market   (production)
  *   - https://*.lovable.app  / https://*.lovable.dev       (Lovable previews)
  *   - https://*.lovableproject.com                         (Lovable previews, alt host)
  *   - Any origin listed in the CORS_ORIGINS env var
@@ -25,8 +24,6 @@ const STATIC_ALLOWED = new Set<string>([
   "http://localhost:5173",
   "http://127.0.0.1:3000",
   "http://127.0.0.1:5173",
-  "https://biohack.market",
-  "https://www.biohack.market",
 ]);
 
 const LOVABLE_HOST_RE =

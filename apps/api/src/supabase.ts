@@ -1,5 +1,5 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-import type { Database } from "@peptidefi/db";
+import type { Database } from "@peptide-oracle/db";
 
 /**
  * Service-role Supabase client used by the API for trusted server-side
@@ -7,7 +7,7 @@ import type { Database } from "@peptidefi/db";
  * shipped to the browser, never instantiated outside this process.
  *
  * This is a thin wrapper rather than reusing
- * @peptidefi/shared/supabase-admin so the API can keep its own client
+ * @peptide-oracle/shared/supabase-admin so the API can keep its own client
  * lifecycle (e.g. swap to a per-request client later if we add request
  * tracing or per-user auth-context propagation).
  */
@@ -23,7 +23,7 @@ export function adminClient(): AdminClient {
   if (!key) throw new Error("adminClient: SUPABASE_SECRET_KEY is not set");
   _admin = createClient<Database>(url, key, {
     auth: { persistSession: false, autoRefreshToken: false },
-    global: { headers: { "x-peptidefi-service": "api" } },
+    global: { headers: { "x-peptide-oracle-service": "api" } },
   });
   return _admin;
 }

@@ -1,7 +1,7 @@
 # Railway deployment — scraper + worker + api
 
 Checklist for deploying the three backend services to Railway. This
-branch is `claude/peptidefi-season-1-Hae69`.
+branch is `peptide-oracle-pivot`.
 
 The scraper, worker, and api are three **separate Railway services** in
 one Railway project, all built from this monorepo. The web app
@@ -10,11 +10,11 @@ one Railway project, all built from this monorepo. The web app
 ## One-time Railway project setup
 
 1. Create a new Railway project from the GitHub repo
-   `keycho/peptidefi`, branch `claude/peptidefi-season-1-Hae69`.
+   `keycho/peptidefi`, branch `peptide-oracle-pivot`.
 2. Create **three empty services** inside that project:
-   - `peptidefi-scraper`
-   - `peptidefi-worker`
-   - `peptidefi-api`
+   - `peptide-oracle-scraper`
+   - `peptide-oracle-worker`
+   - `peptide-oracle-api`
 3. For each service, in Settings → **Source**:
    - **Repository**: keycho/peptidefi
    - **Root Directory**: `/` (the monorepo root — the Dockerfiles need
@@ -60,7 +60,7 @@ override.
 
 | variable | required? | description | where to get it |
 |---|---|---|---|
-| `HEALTH_PORT` | optional | HTTP port for `/health`. Default `8080`. The standalone health server in @peptidefi/shared listens here. | — |
+| `HEALTH_PORT` | optional | HTTP port for `/health`. Default `8080`. The standalone health server in @peptide-oracle/shared listens here. | — |
 
 ### Scraper service only
 
@@ -89,7 +89,7 @@ The API does **not** use a JWT secret. Supabase signs user access tokens with an
 
 The API does **not** use `HEALTH_PORT` — `/health` is mounted on `API_PORT` (same Express server) so Railway's single-port healthcheck routes to it correctly. The standalone-health-server pattern is for the scraper and worker, which have no public API surface to share a port with.
 
-The API service is the **only one that needs a public Railway domain** (Settings → Networking → Generate Domain). The generated `https://peptidefi-api.up.railway.app` (or whatever Railway assigns) is what Lovable points its `Authorization: Bearer …` requests at. Add that origin to `CORS_ORIGINS` if Lovable's preview URL doesn't match `*.lovable.{app,dev,project.com}`.
+The API service is the **only one that needs a public Railway domain** (Settings → Networking → Generate Domain). The generated `https://peptide-oracle-api.up.railway.app` (or whatever Railway assigns) is what Lovable points its `Authorization: Bearer …` requests at. Add that origin to `CORS_ORIGINS` if Lovable's preview URL doesn't match `*.lovable.{app,dev,project.com}`.
 
 ## Before the first deploy — a few sanity checks
 
@@ -98,15 +98,15 @@ The API service is the **only one that needs a public Railway domain** (Settings
 pnpm install --frozen-lockfile
 
 # 2. Type-check all three services (would catch any drift in shared types)
-pnpm --filter @peptidefi/scraper typecheck
-pnpm --filter @peptidefi/worker  typecheck
-pnpm --filter @peptidefi/api     typecheck
+pnpm --filter @peptide-oracle/scraper typecheck
+pnpm --filter @peptide-oracle/worker  typecheck
+pnpm --filter @peptide-oracle/api     typecheck
 
 # 3. Optional: build all three Docker images locally to surface any
 #    Dockerfile / lockfile drift before Railway burns build minutes
-docker build -t peptidefi-scraper -f apps/scraper/Dockerfile .
-docker build -t peptidefi-worker  -f apps/worker/Dockerfile  .
-docker build -t peptidefi-api     -f apps/api/Dockerfile     .
+docker build -t peptide-oracle-scraper -f apps/scraper/Dockerfile .
+docker build -t peptide-oracle-worker  -f apps/worker/Dockerfile  .
+docker build -t peptide-oracle-api     -f apps/api/Dockerfile     .
 ```
 
 ## After the first deploy — verification steps
@@ -181,5 +181,5 @@ docker build -t peptidefi-api     -f apps/api/Dockerfile     .
 
 - **Wave-2 vendors (Limitless, Particle).** Not in this branch. Adding
   them is a separate scraper module each — see the recon report on the
-  `claude/peptidefi-season-1-Hae69` branch for the platform notes
+  `peptide-oracle-pivot` branch for the platform notes
   (BigCommerce + PrestaShop respectively).

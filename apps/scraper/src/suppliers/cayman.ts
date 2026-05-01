@@ -4,7 +4,7 @@ import {
   parseMassToMg,
   type AvailabilityTier,
   type ScrapeResult,
-} from "@peptidefi/shared";
+} from "@peptide-oracle/shared";
 import type { SupplierModule } from "./index";
 
 /**

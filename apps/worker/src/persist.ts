@@ -1,4 +1,4 @@
-import { type AdminClient, type Numeric } from "@peptidefi/shared";
+import { type AdminClient, type Numeric } from "@peptide-oracle/shared";
 import type { TwapInput } from "./twap";
 
 /**

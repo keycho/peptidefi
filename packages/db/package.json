@@ -1,5 +1,5 @@
 {
-  "name": "@peptidefi/db",
+  "name": "@peptide-oracle/db",
   "version": "0.0.0",
   "private": true,
   "description": "PeptideFi database — Supabase migrations and generated TypeScript types.",

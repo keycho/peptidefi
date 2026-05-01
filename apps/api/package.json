@@ -1,5 +1,5 @@
 {
-  "name": "@peptidefi/api",
+  "name": "@peptide-oracle/api",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -10,8 +10,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@peptidefi/db": "workspace:*",
-    "@peptidefi/shared": "workspace:*",
+    "@peptide-oracle/db": "workspace:*",
+    "@peptide-oracle/shared": "workspace:*",
     "@supabase/supabase-js": "^2.45.4",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",

@@ -1,5 +1,5 @@
 {
-  "name": "@peptidefi/shared",
+  "name": "@peptide-oracle/shared",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -12,7 +12,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@peptidefi/db": "workspace:*",
+    "@peptide-oracle/db": "workspace:*",
     "@supabase/supabase-js": "^2.45.4",
     "bignumber.js": "^9.1.2",
     "zod": "^3.23.8"

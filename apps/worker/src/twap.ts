@@ -1,4 +1,4 @@
-import { bn, median, type Numeric } from "@peptidefi/shared";
+import { bn, median, type Numeric } from "@peptide-oracle/shared";
 
 /**
  * Cross-supplier TWAP computation, per-peptide, per-cycle.

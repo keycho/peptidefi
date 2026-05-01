@@ -7,7 +7,7 @@
 # Build context is the monorepo root (workspace deps resolve via pnpm
 # symlinks at install time):
 #
-#   docker build -t peptidefi-api -f apps/api/Dockerfile .
+#   docker build -t peptide-oracle-api -f apps/api/Dockerfile .
 
 FROM node:20-alpine
 
@@ -25,7 +25,7 @@ COPY apps/api/package.json apps/api/
 COPY packages/db/package.json packages/db/
 COPY packages/shared/package.json packages/shared/
 
-RUN pnpm install --frozen-lockfile --filter @peptidefi/api... --prod=false
+RUN pnpm install --frozen-lockfile --filter @peptide-oracle/api... --prod=false
 
 # Layer 2: source.
 COPY tsconfig.base.json ./
