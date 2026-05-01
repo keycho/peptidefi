@@ -532,7 +532,7 @@ implementation.
       https://railway.app/.
 
 - [ ] **New service → Deploy from GitHub repo**. Select the
-      `keycho/peptide-oracle` repo and the `main` branch.
+      `keycho/peptidefi` repo and the `main` branch.
 
 - [ ] **Service name**: `peptide-oracle-oracle` (matches the
       naming pattern of the existing services).
@@ -795,10 +795,10 @@ pubkey before the §9.5.5 pre-mainnet gate.
       Authority pubkey: <YOUR_PUBKEY>
 
       Verifiers: confirm against GitHub
-      <https://github.com/keycho/peptide-oracle/blob/main/docs/oracle-authority.md>
+      <https://github.com/keycho/peptidefi/blob/main/docs/oracle-authority.md>
       and our docs <https://docs.<your-domain>/authority>.
 
-      Spec: <https://github.com/keycho/peptide-oracle/tree/main/docs/specs/01-onchain-commit-layer>
+      Spec: <https://github.com/keycho/peptidefi/tree/main/docs/specs/01-onchain-commit-layer>
       ```
 
 - [ ] Pin the post to the project account.
@@ -970,7 +970,7 @@ git branch -D claude/peptidefi-season-1-Hae69
 # remotely (via GitHub Settings → Branches, since the local proxy
 # in this environment can't push branch deletions; or via gh CLI
 # from operator's machine):
-gh api -X DELETE repos/keycho/peptide-oracle/git/refs/heads/claude/peptidefi-season-1-Hae69
+gh api -X DELETE repos/keycho/peptidefi/git/refs/heads/claude/peptidefi-season-1-Hae69
 ```
 
 Document the deletion date in the project's operations log.
@@ -988,5 +988,5 @@ flip, or via:
 
 ```
 # Once the operator has direct gh CLI access to the renamed repo:
-gh api -X DELETE repos/keycho/peptide-oracle/git/refs/heads/peptide-oracle-pivot
+gh api -X DELETE repos/keycho/peptidefi/git/refs/heads/peptide-oracle-pivot
 ```
