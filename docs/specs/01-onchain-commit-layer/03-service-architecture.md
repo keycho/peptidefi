@@ -310,25 +310,41 @@ The 25s threshold leaves a safety margin between cache age + RPC
 round-trip + submission + confirmation polling. Keeps the typical
 path to one `getLatestBlockhash` call per ~30s instead of per tx.
 
-### 3.4.4 Priority fees
+### 3.4.4 Priority fees + compute-unit limit
 
 **Decision: dynamic priority fees from Helius's
-`getPriorityFeeEstimate` API, capped.**
+`getPriorityFeeEstimate` API (75th percentile), capped at
+**50,000 micro-lamports per CU**, with a CU limit of **150,000**.**
 
 Static fees (e.g. always 1000 micro-lamports per CU) work fine in
 calm conditions but get our txs dropped during congestion. Helius
-returns a percentile-distribution estimate; we use the **75th
-percentile** by default. Capped at **50,000 micro-lamports per CU**
-to bound worst-case cost.
+returns a percentile-distribution estimate, available on mainnet
+(devnet returns -32600 "not available", in which case the
+implementation falls back to a static 1,000 µlamports/CU).
 
-Compute-unit limit: a single Memo instruction uses ~200 CU (per
-empirical Solana metrics). We set CU limit = 500 to buffer against
-program changes. Total priority fee per tx = 500 CU × fee_per_CU.
+**Compute-unit limit: 150,000.** The Memo program's per-byte cost
+on Solana 4.0 is ~420 CU/byte — much higher than the rough "~200
+CU/instruction" earlier drafts of this spec assumed. Empirical
+measurement on devnet (Phase C smoke test, 2026-05-01): the
+224-byte cycle memo consumed **93,889 CU**. For our worst-case
+312-byte TWAP memo that scales to ~131k CU; 150k gives ~14%
+headroom against future drift in the Memo program's CU budget.
+The previous estimate of 500 CU was off by ~270×.
 
-Worst case at the cap: 500 × 50,000 micro-lamports = 25,000,000
-micro-lamports = 25,000 lamports = 0.000025 SOL. Add the 5,000
-lamport base fee; total worst-case per tx is 0.00003 SOL. Even at
-that ceiling, daily cost stays under 0.01 SOL — see §7.
+Worst case at the cap: 150,000 × 50,000 micro-lamports =
+7,500,000,000 µlamports = 7,500,000 lamports = **0.0075 SOL per
+tx**. Add the 5,000-lamport base fee; total worst-case per tx is
+**~0.0076 SOL**. At our cadence (~6 cycle commits/hour + ~26
+TWAP commits/hour ≈ 768 commits/day), the worst-case **daily**
+ceiling is 0.0076 × 768 ≈ **5.8 SOL/day**. In practice priority
+fees stay well below the cap (Helius "High" estimates are
+typically 1,000–10,000 µlamports/CU during normal load), so
+typical daily spend is 0.005–0.05 SOL — see §7.
+
+If the worst-case spend ceiling is unacceptable for an operator,
+they can lower `ORACLE_PRIORITY_FEE_CAP_MICROLAMPORTS` (or its
+equivalent override) at the cost of more transactions getting
+dropped during cluster congestion.
 
 ### 3.4.5 Confirmation commitment level
 
