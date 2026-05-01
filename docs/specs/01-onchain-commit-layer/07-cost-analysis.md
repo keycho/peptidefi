@@ -1,7 +1,7 @@
 # 07 — Cost analysis
 
 Status: **draft**. Cost projections for the on-chain commit layer
-at v1 scale (5 peptides) with scaling scenarios up to 50 peptides.
+at v1 scale (26 peptides) with scaling scenarios up to 250 peptides.
 Numbers are derived from the architectural decisions in §03 — if
 those change, this section is the first thing that needs to be
 re-evaluated.
@@ -84,85 +84,111 @@ Daily cycle-commit cost (median): 144 × 10,000 = 1,440,000 lamports
 ### 7.1.4 TWAP commits
 
 - **Frequency**: 24/day per peptide × N peptides
-- **At v1 (N=5)**: 120/day = 43,800/year
+- **At v1 (N=26)**: 624/day = 227,760/year. The active-peptide
+  subset for v1 is "all `peptides.is_active = true`" per the §9.2.1
+  decision — no allow-list restriction. Every active peptide gets
+  hourly TWAP commits.
 - **Memo size**: 312 bytes (§02.2.3, post-`algo`)
 - **Per-commit cost** (median priority fee): 10,000 lamports = 0.00001 SOL
 
-Daily TWAP-commit cost at N=5 (median): 120 × 10,000 = 1,200,000
-lamports = **0.0012 SOL/day** ($0.24 @ $200/SOL).
+Daily TWAP-commit cost at N=26 (median): 624 × 10,000 = 6,240,000
+lamports = **0.00624 SOL/day** ($1.25 @ $200/SOL).
 
 ### 7.1.5 Daily totals
 
-At v1 (5 peptides), 264 transactions/day:
+At v1 (26 peptides), 768 transactions/day (144 cycle + 624 TWAP):
 
 | scenario            | per-tx cost     | daily SOL    | daily USD @ $100 | daily USD @ $200 | daily USD @ $300 |
 | ------------------- | --------------- | ------------ | ---------------- | ---------------- | ---------------- |
-| Low (calm)          | 5,500 lamports  | 0.001452 SOL | $0.15            | $0.29            | $0.44            |
-| **Median (75th %)** | 10,000 lamports | 0.00264 SOL  | **$0.26**        | **$0.53**        | **$0.79**        |
-| High (cap)          | 30,000 lamports | 0.00792 SOL  | $0.79            | $1.58            | $2.38            |
+| Low (calm)          | 5,500 lamports  | 0.00422 SOL  | $0.42            | $0.84            | $1.27            |
+| **Median (75th %)** | 10,000 lamports | 0.00768 SOL  | **$0.77**        | **$1.54**        | **$2.30**        |
+| High (cap)          | 30,000 lamports | 0.02304 SOL  | $2.30            | $4.61            | $6.91            |
 
 Median is the planning baseline; all subsequent figures use it
-unless noted.
+unless noted. Note that the 26-peptide active set is ~2.9× the
+total transaction count of an early-spec 5-peptide baseline —
+the cycle commits (144/day) don't scale with peptide count, so
+total cost grows less than the TWAP-only ratio of 5.2×.
 
 ## 7.2 Annual cost projection
 
-### 7.2.1 At v1 (5 peptides)
+### 7.2.1 At v1 (26 peptides)
 
-- Annual transaction count: 264 × 365 = **96,360 tx/year**
-- Annual SOL @ median: 96,360 × 10,000 lamports ≈ **0.964 SOL/year**
-- Annual SOL @ high (cap): ≈ 2.89 SOL/year
+- Annual transaction count: 768 × 365 = **280,320 tx/year**
+- Annual SOL @ median: 280,320 × 10,000 lamports ≈ **2.80 SOL/year**
+- Annual SOL @ high (cap): ≈ 8.41 SOL/year
 
 USD annual at $200/SOL:
 
 | scenario | annual cost |
 | -------- | ----------- |
-| Low      | $29         |
-| **Median**| **$193**   |
-| High     | $578        |
+| Low      | $84         |
+| **Median**| **$561**   |
+| High     | $1,682      |
 
 Even at the worst-case priority-fee cap and pessimistic SOL price
-($300), annual Solana fees stay under **$870** at v1 scale. The
-order of magnitude is "research-budget rounding error," not "line
-item that needs board approval."
+($300), annual Solana fees stay under **$2,525** at v1 scale.
+That's a real line item — significantly higher than the 5-peptide
+projections in earlier drafts of this spec — but still
+"line-item-on-a-quarterly-budget" rather than "needs separate
+funding round." The §7.5 total-cost rollup remains under
+$60/month even at the median planning baseline.
 
 ### 7.2.2 SOL keypair buffer recommendation
 
 Per §03.5.1's operational requirement of a ~30-day buffer on the
-hot wallet:
+hot wallet, at v1 = 26 peptides:
 
 | priority fee scenario | 30-day SOL needed | recommended buffer | days at buffer |
 | --------------------- | ------------------ | ------------------- | -------------- |
-| Low (calm)            | 0.044 SOL          | 0.10 SOL            | ~70 days       |
-| Median (75th %)       | 0.080 SOL          | 0.30 SOL            | ~110 days      |
-| High (cap)            | 0.240 SOL          | 0.50 SOL            | ~63 days       |
+| Low (calm)            | 0.13 SOL           | 0.50 SOL            | ~120 days      |
+| Median (75th %)       | 0.23 SOL           | 1.00 SOL            | ~130 days      |
+| High (cap)            | 0.69 SOL           | 1.00 SOL            | ~43 days       |
 
-**Recommendation: initial fund of 0.5 SOL.** Covers ~6 months at
-median priority fees, ~2 months at the worst-case cap. The §03.5.3
-balance alarms (warn at 0.1 SOL, critical at 0.02 SOL) leave plenty
-of operator response time before commits start failing.
+**Recommendation: initial fund of 1.0 SOL** (revised up from the
+0.5 SOL recommendation that applied at the earlier 5-peptide
+baseline). Covers ~4 months at median priority fees, ~6 weeks at
+the worst-case cap. The §03.5.3 default balance alarms (warn at
+0.1 SOL, critical at 0.02 SOL) are now **tight at high priority
+fees** — at v1 = 26 peptides + cap-priced txs, 0.1 SOL is only
+~4 days remaining and 0.02 SOL is < 1 day. Operators should
+consider raising both thresholds via env var to maintain the
+intended buffer:
+
+```
+ORACLE_BALANCE_WARN_SOL      = 0.30   # ~13 days at high cap
+ORACLE_BALANCE_CRITICAL_SOL  = 0.15   # ~7 days at high cap
+```
+
+These are env-var defaults; changing them is a one-line Railway
+config update without restart impact.
 
 ### 7.2.3 Refill cadence
 
-**Recommendation: quarterly refills** (top up to 0.5 SOL every 90
-days). At median priority fees, each refill costs ~0.24 SOL = ~$48
-@ $200/SOL. Annualized: ~$192 in actual SOL spend, which matches
-the §7.2.1 median annual figure.
+**Recommendation: quarterly refills** (top up to 1.0 SOL every 90
+days). At median priority fees, each refill costs ~0.7 SOL =
+~$140 @ $200/SOL. Annualized: ~$561 in actual SOL spend, which
+matches the §7.2.1 median annual figure.
 
 Why quarterly rather than monthly:
 
 - Manual operator action (per §03.5.1 — never auto-refill from a
   larger reserve), so fewer touches is better
 - 90 days lines up with normal financial review cadences
-- Buffer comfortably covers a missed refill (the warn threshold
-  triggers ~30 days before depletion)
+- Buffer comfortably covers a missed refill at median priority
+  fees (~130 days at 1.0 SOL initial)
 
 Why not annual or semi-annual:
 
 - Larger one-time fund increases the worst-case-key-compromise loss
   proportionally
 - §03.5.1 specifies "minimal SOL, ~30-day buffer." Quarterly with
-  0.5 SOL gives roughly 30 days of headroom past the warn threshold,
-  not multiples.
+  1.0 SOL gives roughly 30 days of headroom past the warn threshold
+  even at the high-priority-fee cap.
+
+**Tighten to monthly if** sustained priority fees stay near the cap
+(which would deplete a 1.0 SOL fund in ~6 weeks). The §08.2.1
+weekly Helius dashboard review is the early signal for this.
 
 ## 7.3 RPC costs
 
@@ -188,18 +214,18 @@ Plus periodic background calls:
 
 ### 7.3.2 Daily committer RPC consumption
 
-At v1 (264 commits/day):
+At v1 (768 commits/day):
 
 ```
-264 commits × 7.5 calls = 1,980
+768 commits × 7.5 calls = 5,760
 balance checks            =   288
 recovery reconcile        =    50
                           ──────
-                            ~2,300 RPC calls/day
+                            ~6,100 RPC calls/day
 ```
 
-Helius free tier: 100,000 requests/day. **Committer uses ~2.3% of
-the free tier.** ~43× headroom for traffic growth, retries, or
+Helius free tier: 100,000 requests/day. **Committer uses ~6.1% of
+the free tier.** ~16× headroom for traffic growth, retries, or
 verification API consumption.
 
 ### 7.3.3 Verification API RPC consumption
@@ -222,18 +248,18 @@ viral scale):
 | Heavy      | 10,000            | ~60,000       | 60%               |
 
 Adding verification API traffic to committer consumption, the
-moderate scenario lands at **~8,300 calls/day** — comfortably
-within the free tier with ~12× headroom.
+moderate scenario lands at **~12,100 calls/day** — comfortably
+within the free tier with ~8× headroom.
 
 ### 7.3.4 Free-tier headroom analysis
 
-Total daily Solana RPC at v1 (5 peptides), moderate traffic:
+Total daily Solana RPC at v1 (26 peptides), moderate traffic:
 
 ```
-committer:           2,300
+committer:           6,100
 verification API:    6,000
                     ──────
-                     8,300/day  (8.3% of 100k free tier)
+                    12,100/day  (12.1% of 100k free tier)
 ```
 
 Free tier is comfortable for v1. Triggers for upgrade documented
@@ -332,44 +358,52 @@ include a "review storage every 6 months" item.
 
 ## 7.5 Total cost of operation
 
-At v1 (5 peptides), median priority fees, $200/SOL, moderate
+At v1 (26 peptides), median priority fees, $200/SOL, moderate
 verification API traffic:
 
 | component                    | annual    | monthly equivalent |
 | ---------------------------- | --------- | ------------------ |
-| Solana fees (96k tx/year)    | ~$193     | ~$16               |
+| Solana fees (280k tx/year)   | ~$561     | ~$47               |
 | Helius RPC (free tier)       | $0        | $0                 |
 | Railway oracle service       | ~$90      | ~$8                |
 | Supabase Pro (marginal)      | $0        | $0                 |
-| **Total**                    | **~$283** | **~$24**           |
+| **Total**                    | **~$651** | **~$54**           |
 
-**Order of magnitude: $20–25/month for v1 oracle operation.** That
-rises to ~$30/month if we conservatively use the high priority fee
-cap, ~$80/month if we add Helius Developer tier ($49/month) without
-needing it.
+**Order of magnitude: ~$50–55/month for v1 oracle operation at the
+median priority-fee scenario.** That rises to ~$150/month if
+priority fees sustain at the cap (worst-case-but-bounded), and
+to ~$100/month if we add Helius Developer tier ($49/month) when
+verification traffic eventually outgrows the free tier.
 
 For comparison: the existing scraper + worker + API services on
-Railway run at roughly the same monthly cost. The oracle layer
-roughly doubles the project's hosted-infrastructure operating
+Railway run at roughly $25–35/month combined. The oracle layer
+roughly **doubles** the project's hosted-infrastructure operating
 expense — but adds the entire on-chain attestation surface, which
 is the main user-facing differentiator for the new direction.
+
+The 26-peptide v1 baseline is materially more expensive than the
+5-peptide projections in earlier drafts of this spec (~$24/month).
+The added cost is honest scaling — every new peptide means an
+extra 24 TWAP commits/day. If user-facing cost ever needs trimming,
+the lever is the §03.3.4 active-peptide allow-list filter (env
+var, no code change).
 
 ## 7.6 Cost scaling scenarios
 
 ### 7.6.1 Scaling matrix
 
-| metric                    | v1 (5)    | 10        | 25        | 50        |
-| ------------------------- | --------- | --------- | --------- | --------- |
-| Cycle commits/day         | 144       | 144       | 144       | 144       |
-| TWAP commits/day          | 120       | 240       | 600       | 1,200     |
-| Total tx/day              | 264       | 384       | 744       | 1,344     |
-| Annual tx                 | 96k       | 140k      | 272k      | 491k      |
-| Annual SOL @ median       | 0.96      | 1.40      | 2.72      | 4.91      |
-| Annual SOL @ high         | 2.89      | 4.20      | 8.16      | 14.7      |
-| Annual fees @ $200 median | $193      | $280      | $544      | $982      |
-| Annual fees @ $200 high   | $578      | $840      | $1,632    | $2,940    |
-| Daily committer RPC       | ~2,300    | ~3,300    | ~6,400    | ~11,500   |
-| Annual `commit_observations` storage | ~930 MB | ~930 MB | ~2.3 GB | ~4.6 GB |
+| metric                    | **v1 (26)** | 50        | 100       | 250       |
+| ------------------------- | ----------- | --------- | --------- | --------- |
+| Cycle commits/day         | 144         | 144       | 144       | 144       |
+| TWAP commits/day          | 624         | 1,200     | 2,400     | 6,000     |
+| Total tx/day              | 768         | 1,344     | 2,544     | 6,144     |
+| Annual tx                 | 280k        | 491k      | 929k      | 2.24M     |
+| Annual SOL @ median       | 2.80        | 4.91      | 9.29      | 22.4      |
+| Annual SOL @ high         | 8.41        | 14.7      | 27.9      | 67.3      |
+| Annual fees @ $200 median | **$561**    | $982      | $1,857    | $4,485    |
+| Annual fees @ $200 high   | **$1,682**  | $2,940    | $5,571    | $13,455   |
+| Daily committer RPC       | ~6,500      | ~11,500   | ~21,500   | ~52,000   |
+| Annual `commit_observations` storage | ~2.4 GB | ~4.6 GB | ~9.2 GB | ~23 GB    |
 
 ### 7.6.2 What scales linearly vs sub-linearly
 
@@ -406,14 +440,23 @@ proportion):
 | Railway service hits memory limit      | ~512 MB peak           | bump container size, $5–10/mo extra |
 | Verification API rate limits binding   | sustained 429s         | upgrade Helius OR add CDN front |
 
-The Helius upgrade is the closest threshold by an order of magnitude.
-At 50 peptides we'd hit ~12k committer + verification API in the
-moderate scenario — still well under 50k. Realistically the
-verification API traffic would have to grow ~6× over moderate
-before triggering the upgrade.
+**At v1 = 26 peptides** the committer alone burns ~6,500 RPC/day,
+leaving ~93,500/day of free-tier headroom for the verification
+API. At 50 peptides total RPC consumption would land around
+~17,000/day with moderate verification traffic — still well under
+50,000.
 
-The Supabase tier change is so far away (estimated 30+ peptides
-× 5 years) that it's not a v1 planning concern.
+**The Helius upgrade is closer than originally projected** (when
+the spec assumed v1=5). At 100+ peptides the committer alone
+would push ~22k/day, and verification traffic at "heavy" scale
+would breach the 50k upgrade threshold. The 50% trigger lives in
+the 100-peptide column, not the 50-peptide column.
+
+**The Supabase tier change** moves to ~year-3 at the v1=26 baseline
+(8 GB Pro tier ÷ 2.4 GB/year ≈ 3.3 years). At 50 peptides it's
+~year-1.5. Storage growth is now a real planning concern, not the
+distant non-issue it was at v1=5; the §08.2.3 weekly storage check
+becomes load-bearing.
 
 ## 7.7 Decisions to flag
 
@@ -443,19 +486,27 @@ The Supabase tier change is so far away (estimated 30+ peptides
 
 The dollar projections above assume $200/SOL. Actual SOL has ranged
 roughly $20–$300 in the trailing 24 months. Sensitivity at v1 scale
-(median priority fees, ~0.96 SOL/year):
+(26 peptides, median priority fees, ~2.80 SOL/year):
 
 | SOL price | annual fees | monthly equivalent |
 | --------- | ----------- | ------------------ |
-| $50       | $48         | $4                 |
-| $100      | $96         | $8                 |
-| **$200**  | **$193**    | **$16**            |
-| $300      | $289        | $24                |
-| $500      | $482        | $40                |
+| $50       | $140        | $12                |
+| $100      | $280        | $23                |
+| **$200**  | **$561**    | **$47**            |
+| $300      | $841        | $70                |
+| $500      | $1,402      | $117               |
 
-The oracle operating cost is dominated by hosting and (eventually)
-RPC tier — even at $500/SOL, Solana fees are only ~2× the Railway
-hosting line. Operationally this means: **the project's exposure
-to SOL price volatility is not a planning concern at v1 scale**,
-but it becomes one at 50+ peptides where annual SOL spend climbs
-into the multi-thousand-dollar range.
+At the 26-peptide v1 baseline, Solana fees are now the **largest
+single line item** in the operating budget (vs ~equal to hosting
+at the original 5-peptide projection). Operationally this means:
+**SOL price volatility is a real planning concern at v1 scale**,
+not deferred to 50+ peptides as the earlier spec drafts suggested.
+A 2× swing in SOL price moves monthly cost by ~$50 either direction
+— meaningful but absorbable.
+
+If sustained SOL price > $400 makes the line item uncomfortable,
+levers in priority order: (a) restrict the active-peptide
+allow-list per §03.3.4 to the highest-value subset, (b) lower the
+priority-fee cap from 50k → 20k µlamports/CU (accepting some
+dropped-tx risk during congestion), (c) drop TWAP commit cadence
+from hourly to bi-hourly (halves TWAP-commit count).

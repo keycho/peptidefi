@@ -495,8 +495,9 @@ operational walk-through.
 
 ### 8.6.1 When to rotate
 
-- **Routine.** Every 12 months, regardless of incident. Limits
-  blast radius of an undetected key compromise.
+**v1 policy: rotation-on-incident only.** No scheduled cadence.
+Rotation is triggered exclusively by one of:
+
 - **Compromise suspected.** Any of: balance drops without our
   authorization; commits appear that we didn't initiate; Railway
   access logs show unauthorized session; operator suspects laptop
@@ -506,24 +507,44 @@ operational walk-through.
 - **After §8.5.6 verification mismatch** if the root cause is a
   signing-side compromise.
 
+**Why no routine cadence in v1:** with a single operator, scheduled
+rotation adds operational overhead (full §8.6 procedure + 14-day
+advance notice + 3-channel publication update) without enough
+recurring drill value to justify the cost. The full procedure
+below is documented so it's runnable under incident pressure when
+it's needed.
+
+**Deferred to v2 (§9.3):** scheduled annual rotation. Worth
+introducing once the project has a multi-person team that benefits
+from drilling the procedure regularly — at that point the routine
+cadence pays off both in muscle memory and in shrinking the
+blast-radius window of an undetected compromise.
+
 ### 8.6.2 Pre-rotation checklist
 
 1. Snapshot current state: balance, latest cycle_id, latest
    twap_commit timestamp. Note in ops log.
-2. If routine rotation, **announce 14 days in advance** on the
-   project's docs site + Twitter so verifiers TOFU-pinned to the
-   old pubkey know to expect the change.
-3. If compromise rotation, **skip the advance notice** and execute
-   immediately; communication post-rotation per §8.11.
+2. **All v1 rotations are incident-driven** (§8.6.1) — execute
+   immediately; communication post-rotation per §8.11. The
+   "14-day advance notice for routine" pattern doesn't apply at
+   v1; it returns when scheduled rotation moves from §9.3
+   deferred-to-v2 into the live policy.
+3. If the rotation is in response to suspected compromise (vs
+   operator change), follow the §8.10.3 escalated procedure
+   instead — drain the old keypair to dead-letter address
+   immediately rather than waiting the §8.6.7 24-hour stability
+   window.
 4. Confirm operator has access to all three publication channels
    before starting (the rotation isn't done until all three are
    updated in lockstep — §8.6.6).
 
 ### 8.6.3 Generate the new keypair
 
-**Air-gapped if possible** for the routine rotation; for emergency
-compromise rotation, the operator's local laptop with disk
-encryption is acceptable.
+**Air-gapped if possible** for operator-change or post-mismatch
+rotations where time pressure is moderate. For emergency compromise
+rotation (suspected active key theft) the operator's local laptop
+with disk encryption is acceptable — speed beats air-gap when an
+attacker may already be using the key.
 
 ```
 solana-keygen new --no-bip39-passphrase --outfile new-oracle-<DATE>.json
@@ -937,8 +958,7 @@ No application-level write-up needed unless the outage lasted
 | Incident resolved                        | when stable: status page → "resolved" + brief note   | Status page                        |
 | Major incident (downtime > 1h or affects verification) | within 4h of detection: Twitter post     | Status page + Twitter              |
 | Post-incident write-up (qualifying)      | within 5 business days                               | GitHub repo + link from Twitter    |
-| Authority pubkey rotation (routine)      | 14 days advance notice                               | All four channels in coordination  |
-| Authority pubkey rotation (compromise)   | within 1h of completion                              | All four channels in coordination  |
+| Authority pubkey rotation (incident)     | within 1h of completion                              | All four channels in coordination  |
 
 ### 8.11.3 What qualifies for a post-incident write-up
 
@@ -975,6 +995,8 @@ fatigue (a write-up for every blip burns out the operator).
    1h classification, 4h Twitter for major incidents, 5 business
    days for write-up.** Aggressive but doable for a single
    operator. Tighter SLAs would require a second on-call person.
-5. **Routine keypair rotation: every 12 months.** Limits blast
-   radius of undetected compromise. Alternative: only rotate on
-   incident (less ops overhead, more risk).
+5. **Keypair rotation: incident-only for v1** (§8.6.1). No
+   scheduled cadence at single-operator scale. Scheduled annual
+   rotation deferred to v2 per §9.3 — re-introduce when a
+   multi-person team benefits from drilling the procedure
+   regularly.

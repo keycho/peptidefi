@@ -1,13 +1,18 @@
 # 09 — Open questions consolidation
 
-Status: **the closing section of the spec**. Pulls every decision
-flagged across §01–§08 into a single review checklist, plus the
-operational and pre-mainnet prerequisites that need to be in place
-before implementation begins.
+Status: **closed — spec is fully locked.** All decisions from the
+spec review pass have been confirmed. §9.2 (pending) is empty —
+preserved as an empty section for symmetry and future review
+passes. §9.4 and §9.5 remain operator-actionable and gate the
+mainnet cutover.
 
-This file is meant to be re-read once before implementation kicks
-off. Anything in §9.2 (pending) needs explicit confirmation;
-anything in §9.4 / §9.5 needs to actually happen in operator-land.
+Section 9 read order:
+
+- §9.1: 29 confirmed decisions (immutable for v1)
+- §9.2: empty (no pending decisions)
+- §9.3: 9 deferred-to-v2 items
+- §9.4: implementation prerequisites (operator setup)
+- §9.5: pre-mainnet checklist (devnet → mainnet gate)
 
 ## 9.1 Confirmed decisions
 
@@ -149,165 +154,151 @@ spec rather than tweaking implementation.
   finalized slot being re-orged. Manual audit-trail recovery if it
   ever occurs.
 
+### 9.1.17 Active peptide subset: all `is_active=true` peptides
+
+- **Confirmed**: yes (this review pass)
+- **Source**: §03.3.4
+- **Impact**: v1 commits hourly TWAPs for every active peptide
+  (currently 26). Drives daily TWAP-commit count to 624/day
+  (~768/day total with cycle commits) and pushes annual SOL spend
+  to ~2.80 SOL median / ~8.41 SOL high cap. The §07 cost analysis
+  is rebased onto this baseline; total v1 monthly operating cost
+  ~$54 at median priority fees. The §03.3.4 env-var allow-list
+  filter remains available for trimming the subset later if user-
+  facing cost ever needs reducing.
+
+### 9.1.18 Server-side verification helpers ship in v1
+
+- **Confirmed**: yes (this review pass)
+- **Source**: §05.5 + §05.7 decision 4
+- **Impact**: `POST /api/oracle/verify/observation` and
+  `/verify/twap` are part of the v1 API surface. Required for the
+  explorer's "verify" button to function without forcing client-
+  side library use. Same math as the future client library, so no
+  extra surface area to maintain.
+
+### 9.1.19 No TWAP backfill on outages — document gaps instead
+
+- **Confirmed**: yes (this review pass)
+- **Source**: §08.7.3 + §08.12 decision 1
+- **Impact**: when commits stop for an extended period, the
+  committer service does NOT backfill missed TWAP commits.
+  Cycle commits CAN catch up via the normal poll (they anchor a
+  finished historical event). TWAP gaps go into
+  `docs/oracle-gaps.md` for verifiers to inspect. Preserves the
+  trust narrative that on-chain commit timestamps reflect actual
+  commit time, not retroactive recomputation. Verifiers can still
+  reconstruct historical TWAPs from cycle-anchored observations
+  during gaps if they need continuous coverage.
+
+### 9.1.20 Keypair rotation: incident-only for v1
+
+- **Confirmed**: yes (this review pass)
+- **Source**: §08.6.1 + §08.12 decision 5
+- **Impact**: at single-operator scale, scheduled annual rotation
+  adds operational overhead without enough recurring drill value
+  to justify the cost. v1 rotates only on incident (compromise,
+  operator change, post-mismatch root-cause). Full §8.6 procedure
+  remains documented so it's runnable under incident pressure.
+  Scheduled annual rotation deferred to v2 — see §9.3.9 — for when
+  a multi-person team makes the drill cadence worthwhile.
+
+### 9.1.21 Verification API rate limits: 120 / 60 / 30 req/min/IP
+
+- **Confirmed**: yes (this review pass — accepted as recommended)
+- **Source**: §05.4.13 + §05.7 decision 1
+- **Impact**: defines the public API's concurrency ceiling per-IP
+  across the three endpoint buckets (read-light / read-heavy /
+  verify). Env-var tunable; can be raised after observing real
+  traffic.
+
+### 9.1.22 Caching strategy: defer Cloudflare to traffic-warrants
+
+- **Confirmed**: yes (this review pass — accepted as recommended)
+- **Source**: §05.4.12 + §05.7 decision 2 + §08.8
+- **Impact**: v1 ships with `Cache-Control` headers set per the
+  §05.4.12 matrix (`immutable` for finalized cycle / historical
+  TWAP, short TTLs for current state). No CDN fronting Railway in
+  v1; modern browsers + downstream CDNs honor the headers. Adding
+  Cloudflare later is a DNS change + cache-rule config without
+  application changes.
+
+### 9.1.23 Pagination: cursor-based, default 50, max 200
+
+- **Confirmed**: yes (this review pass — accepted as recommended)
+- **Source**: §05.4 + §05.7 decision 3
+- **Impact**: list endpoints use opaque base64 server-token
+  cursors with default page size 50 and ceiling 200. Bounds
+  response sizes and DB load; easy to dial.
+
+### 9.1.24 No authentication for v1; all reads public
+
+- **Confirmed**: yes (this review pass — accepted as recommended)
+- **Source**: §05.7 decision 5
+- **Impact**: aligns with "the oracle's value is in being
+  verifiable" — gating reads would defeat the trust story. Future
+  paid tier adds API-key auth with boosted rate limits without
+  gating access to the data itself.
+
+### 9.1.25 SOL pre-purchase cadence: quarterly at 1.0 SOL refill
+
+- **Confirmed**: yes (this review pass — accepted as recommended,
+  refill amount bumped from 0.5 → 1.0 SOL to cover the 26-peptide
+  baseline at high priority fees)
+- **Source**: §07.2.3 + §07.7 decision 3 + §08.4.1
+- **Impact**: top up the operator's funding wallet to 1.0 SOL
+  every 90 days. Annualized SOL spend ~$561 at $200/SOL median.
+  Tighten to monthly if sustained priority fees stay near the
+  cap (early signal: §08.2.1 weekly Helius dashboard review).
+
+### 9.1.26 Track Helius RPC usage as a separate metric
+
+- **Confirmed**: yes (this review pass — accepted as recommended)
+- **Source**: §07.7 decision 4 + §08.2.1 / §08.3.2
+- **Impact**: weekly Helius dashboard review during v1 rollout,
+  monthly after stabilization. Gives advance warning of the 50%
+  free-tier upgrade trigger. Operator burden is one dashboard
+  view per week.
+
+### 9.1.27 Status-page tooling: Better Stack
+
+- **Confirmed**: yes (this review pass — accepted as recommended)
+- **Source**: §08.9.1 + §08.12 decision 2
+- **Impact**: single vendor for heartbeat monitoring + public
+  status page on Better Stack's free tier. Railway-native
+  integration. Switching providers later is a DNS change +
+  reconfigure; not load-bearing.
+
+### 9.1.28 Post-mortem threshold: §08.11.3 conditions
+
+- **Confirmed**: yes (this review pass — accepted as recommended)
+- **Source**: §08.11.3 + §08.12 decision 3
+- **Impact**: write-up qualifying conditions are >30 min downtime
+  OR >10 failed commits OR keypair rotation OR external
+  verification mismatch OR downstream-integration coordination
+  required. Balances honesty against operator fatigue at single-
+  maintainer scale.
+
+### 9.1.29 Incident communication SLAs: 15 min / 1h / 4h / 5d
+
+- **Confirmed**: yes (this review pass — accepted as recommended)
+- **Source**: §08.11.2 + §08.12 decision 4
+- **Impact**: status page → "investigating" within 15 min of
+  detection; → "identified" within 1h; Twitter post within 4h for
+  major incidents; full post-mortem within 5 business days.
+  Aggressive but doable for a single operator. Tighter SLAs would
+  require a second on-call person.
+
 ## 9.2 Pending decisions
 
-These have a recommended answer in the spec but haven't been
-explicitly confirmed during review. Each needs a thumbs-up before
-implementation begins. Listed in roughly the order they'd come up
-during build-out.
+**No pending decisions. All §9.1 entries confirmed during the
+review pass that closed the spec.**
 
-### 9.2.1 Active peptide subset for v1 TWAP commits
-
-- **Question**: which peptides does the committer issue hourly TWAP
-  commits for?
-- **Recommended**: all `peptides.is_active = true` (currently 26).
-  Allow-list filter via env var if we want a smaller launch set.
-- **Status**: pending
-- **Source**: §03.3.4
-- **Impact**: drives daily TWAP-commit count (24 × N peptides). At
-  N=26 we hit ~624/day (~768/day total with cycle commits) instead
-  of 264/day at v1 = 5 peptides as costed in §07.5. SOL annual
-  cost climbs roughly 2.5× but stays under $500/year at $200/SOL.
-
-### 9.2.2 Verification API rate limits: 120 / 60 / 30 req/min/IP
-
-- **Question**: what default per-IP rate limits for the three buckets
-  (read-light / read-heavy / verify)?
-- **Recommended**: 120 / 60 / 30 as in §05.4.13
-- **Status**: pending
-- **Source**: §05.7 decision 1
-- **Impact**: defines the public API's concurrency ceiling. Env-var
-  tunable; can be raised once we observe real traffic.
-
-### 9.2.3 Caching strategy with `immutable` directive
-
-- **Question**: do we put Cloudflare in front of the API service in
-  v1, or accept the lower hit rate on Railway's default ingress?
-- **Recommended**: defer Cloudflare until verification API traffic
-  warrants (§08.8). v1 ships with the cache headers set per
-  §05.4.12 even without a CDN — modern browsers + downstream CDNs
-  honor them.
-- **Status**: pending
-- **Source**: §05.7 decision 2 + §08.8
-- **Impact**: at v1 scale, no CDN is fine. Adding Cloudflare later
-  is a DNS change + cache-rule config; no application changes.
-
-### 9.2.4 Pagination: cursor-based, default 50, max 200
-
-- **Question**: page-size defaults for list endpoints?
-- **Recommended**: 50 / 200 with opaque base64 cursors
-- **Status**: pending
-- **Source**: §05.7 decision 3
-- **Impact**: server-side bounds on response size and DB load.
-  Easy to dial.
-
-### 9.2.5 Server-side verification helpers ship in v1
-
-- **Question**: do `POST /api/oracle/verify/observation` and
-  `/verify/twap` exist in v1, or wait for the client library?
-- **Recommended**: ship in v1
-- **Status**: pending
-- **Source**: §05.5 + §05.7 decision 4
-- **Impact**: makes the casual-user explorer button trivial; same
-  math as the client library so no extra surface to maintain.
-  Without these, the explorer must do the verification client-side
-  before any client library exists.
-
-### 9.2.6 Authentication: none for v1
-
-- **Question**: are oracle reads behind any auth?
-- **Recommended**: no — all public read.
-- **Status**: pending
-- **Source**: §05.7 decision 5
-- **Impact**: aligns with "the oracle's value is in being verifiable."
-  Future paid tier adds API-key auth with boosted rate limits but
-  doesn't gate access to data.
-
-### 9.2.7 SOL pre-purchase cadence: quarterly
-
-- **Question**: cadence for restocking the operator's funding wallet?
-- **Recommended**: quarterly (every 90 days), buy 0.5–1.0 SOL
-- **Status**: pending
-- **Source**: §07.7 decision 3 + §08.4.1
-- **Impact**: amortizes exchange fees, matches normal financial
-  review cadence. Tighter cadence (monthly) is fine if operator
-  prefers.
-
-### 9.2.8 Track Helius RPC usage as a separate metric
-
-- **Question**: do we monitor Helius daily request count
-  proactively, or wait for rate-limit hits to learn about it?
-- **Recommended**: weekly review during v1 rollout, monthly after
-  stabilization (§08.2.1 / §08.3.2)
-- **Status**: pending
-- **Source**: §07.7 decision 4
-- **Impact**: gives advance warning before we hit the upgrade
-  threshold. The operator burden is low (one dashboard view per
-  week).
-
-### 9.2.9 TWAP backfill: NO, document gaps
-
-- **Question**: when commits stop for an extended period, do we
-  backfill missed TWAP commits or document the gap?
-- **Recommended**: document gaps (in `docs/oracle-gaps.md`); do not
-  backfill TWAP commits (cycle commits CAN be caught up via the
-  normal poll, since they anchor a finished historical event).
-- **Status**: pending — **most consequential decision in §9.2**
-- **Source**: §08.7.3 + §08.12 decision 1
-- **Impact**: continuous TWAP coverage in the on-chain audit trail
-  vs cleaner trust narrative ("if we say it was committed at time T,
-  it was actually committed at time T"). Verifiers can recompute
-  historical TWAPs from cycle-anchored observations during gaps,
-  so users aren't blocked. Open for revision in v2.
-
-### 9.2.10 Status-page tooling: Better Stack
-
-- **Question**: which status-page provider for the operator's
-  uptime + status page?
-- **Recommended**: Better Stack (free tier, single vendor for
-  monitoring + status page, Railway-native)
-- **Status**: pending
-- **Source**: §08.9.1 + §08.12 decision 2
-- **Impact**: alternative is custom `/status` on docs site (more
-  control, more maintenance). Switching providers later is a
-  DNS change + reconfigure; not load-bearing.
-
-### 9.2.11 Post-mortem threshold: §08.11.3 conditions
-
-- **Question**: when do we publish a post-incident write-up?
-- **Recommended**: §08.11.3 conditions (>30min downtime, >10
-  failed commits, rotation, external mismatch, downstream
-  comms required)
-- **Status**: pending
-- **Source**: §08.12 decision 3
-- **Impact**: balances honesty (publish failures) against operator
-  fatigue (write-up for every blip). Write-up-everything is
-  unsustainable for a single operator; write-up-only-major risks
-  trust loss.
-
-### 9.2.12 Incident communication SLAs: 15 min / 1h / 4h / 5d
-
-- **Question**: time targets for status-page updates, public
-  Twitter posts, post-mortem publication?
-- **Recommended**: 15 min status-page → "investigating", 1h →
-  "identified", 4h Twitter for major incidents, 5 business days
-  for post-mortem.
-- **Status**: pending
-- **Source**: §08.11.2 + §08.12 decision 4
-- **Impact**: aggressive but doable for a single operator. Tighter
-  SLAs require a second on-call person.
-
-### 9.2.13 Routine keypair rotation: every 12 months
-
-- **Question**: do we rotate the authority keypair on a schedule
-  even without incident?
-- **Recommended**: yes, annually
-- **Status**: pending
-- **Source**: §08.6.1 + §08.12 decision 5
-- **Impact**: limits blast radius of undetected key compromise.
-  Adds operational overhead (full §08.6 procedure + 14-day advance
-  notice + 3-channel publication update) once per year. Alternative
-  is rotate-on-incident-only — less ops overhead, more risk.
+This section is preserved as an empty placeholder so future review
+passes (e.g. v2 protocol bumps, user-facing change requests, etc.)
+have a stable anchor for new pending items. If anything appears
+here in the future, treat as "not yet confirmed; needs an explicit
+operator thumbs-up before implementation."
 
 ## 9.3 Deferred to v2
 
@@ -417,6 +408,23 @@ spec is honest about the trust assumptions v1 carries.
   on would slow down the casual-user explorer button. Default-off
   + opt-in keeps the common case fast while supporting full
   verification when needed.
+
+### 9.3.9 Scheduled annual keypair rotation
+
+- **Question**: do we rotate the authority keypair on a schedule
+  even without incident?
+- **Decision**: deferred to v2. v1 ships rotation-on-incident only
+  (§9.1.20).
+- **Source**: §08.6.1 + §08.12 decision 5
+- **Impact**: annual scheduled rotation limits the blast-radius
+  window of an undetected key compromise from "until next incident"
+  to "≤ 12 months." It costs the full §08.6 procedure once per
+  year (14-day advance notice + 3-channel publication update +
+  drill cost). At single-operator scale the drill value isn't
+  enough to justify the cost; v1 defers. The trigger for promoting
+  to v1.x: a multi-person team where the drill has training value
+  beyond just the rotation itself, OR a clear external compliance
+  requirement.
 
 ## 9.4 Implementation prerequisites
 
