@@ -1,5 +1,5 @@
 import type { SqlClient } from "./client";
-import { bytesToHex0x, type MerkleTree } from "../merkle";
+import { bytesToHex0x, type MerkleTree } from "@peptide-oracle/shared";
 
 /**
  * Atomic commit-cycle row write via the register_commit_cycle RPC

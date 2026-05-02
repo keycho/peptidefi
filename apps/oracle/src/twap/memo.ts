@@ -1,5 +1,5 @@
-import { buildMerkleTree, bytesToHex0x } from "../merkle";
-import type { Observation } from "../canonical";
+import { buildMerkleTree, bytesToHex0x } from "@peptide-oracle/shared";
+import type { Observation } from "@peptide-oracle/shared";
 import { canonicalTwapMemoJson, type TwapMemoInput } from "./canonical";
 
 /**

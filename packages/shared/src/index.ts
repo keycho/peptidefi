@@ -14,3 +14,11 @@ export * from "./fx";
 export * from "./supabase-admin";
 export * from "./scraper-types";
 export * from "./health";
+
+// On-chain commit primitives — canonical observation form (§02.4.2)
+// + Merkle tree construction (§02.4.5) + proof generation /
+// verification. Used by the oracle for memo construction and by the
+// api for verification endpoints.
+export * from "./canonical";
+export * from "./merkle";
+export * from "./merkle-proof";

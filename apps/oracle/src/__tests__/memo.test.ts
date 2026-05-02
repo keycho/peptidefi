@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildCycleCommitFromObservations, buildCycleMemo } from "../memo";
-import { bytesToHex0x } from "../merkle";
+import { bytesToHex0x } from "@peptide-oracle/shared";
 import {
   SPEC_CYCLE_MEMO_BYTES,
   SPEC_CYCLE_MEMO_INPUT,

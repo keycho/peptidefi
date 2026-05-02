@@ -1,4 +1,4 @@
-import type { Observation } from "../canonical";
+import type { Observation } from "@peptide-oracle/shared";
 
 /**
  * Test fixtures from the spec's §02.4.6 worked example. Field values

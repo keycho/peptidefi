@@ -27,3 +27,21 @@ export function adminClient(): AdminClient {
   });
   return _admin;
 }
+
+/**
+ * Untyped variant of adminClient() — same client, but with the
+ * Database schema-type stripped. Used by the §05 verification
+ * routes that read from commit_cycles, commit_observations, and
+ * twap_commits — tables added in migrations 0031/0032 that aren't
+ * yet in the @peptide-oracle/db generated types.
+ *
+ * The narrow row shapes consumed by those routes are declared
+ * inline in each route file, so the untyped client doesn't widen
+ * the surface beyond a single .from() call site.
+ *
+ * Once the Database types are regenerated to include these tables,
+ * this helper goes away and the routes switch to adminClient().
+ */
+export function adminClientUntyped(): SupabaseClient {
+  return adminClient() as unknown as SupabaseClient;
+}

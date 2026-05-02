@@ -4,8 +4,8 @@ import {
   canonicalTimestamp,
   type SupplierObservationRow,
 } from "../db/observation-adapter";
-import { canonicalObservationJson } from "../canonical";
-import { bytesToHex0x, leafHash } from "../merkle";
+import { canonicalObservationJson } from "@peptide-oracle/shared";
+import { bytesToHex0x, leafHash } from "@peptide-oracle/shared";
 import {
   SPEC_OBS_1,
   SPEC_OBS_1_CANONICAL_JSON,

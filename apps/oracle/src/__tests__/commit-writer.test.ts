@@ -5,7 +5,7 @@ import {
   type RegisterCommitCycleArgs,
 } from "../db/commit-writer";
 import type { SqlClient } from "../db/client";
-import { buildMerkleTree } from "../merkle";
+import { buildMerkleTree } from "@peptide-oracle/shared";
 import { SPEC_OBS_1, SPEC_OBS_2, SPEC_OBS_3, SPEC_OBS_4 } from "./fixtures";
 
 /**
