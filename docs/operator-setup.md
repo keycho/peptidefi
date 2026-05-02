@@ -20,7 +20,7 @@ of date.
 | 2 | Helius account + API key           | yes          | 5 min   | email     | free tier           |
 | 3 | Oracle keypair generated + funded  | yes          | 30 min  | tx confirm| 1.0 SOL one-time (~$200 @ $200/SOL) |
 | 4 | BACHEM/SIGMA suppliers paused      | needs #1     | 2 min   | none      | free                |
-| 5 | Railway oracle service configured  | needs #1,2,3 | 30 min  | deploy    | $5–10/mo marginal   |
+| 5 | Railway scraper + oracle services  | needs #1,2,3 | 60 min  | 2 deploys | $10–20/mo marginal  |
 | 6 | Better Stack monitoring + status   | needs #5     | 45 min  | SMS test  | free tier           |
 | 7 | Authority pubkey publication       | needs #3     | 30 min  | none      | free                |
 | 8 | Documentation site live            | yes          | varies  | depends   | free–$X/mo          |
@@ -496,27 +496,213 @@ suppliers whose scrapers never produce successful observations
 
 ---
 
-## 5. Railway oracle service configured
+## 5. Railway services configured (scraper + oracle)
 
-The fourth Railway service in the existing project, alongside
-`peptide-oracle-api`, `peptide-oracle-scraper`, and
-`peptide-oracle-worker`.
+The scraper and the oracle deploy as **two separate Railway
+services in one Railway project**, both built from the
+`keycho/peptidefi` monorepo. The scraper runs continuously,
+writing observation rows to Supabase. The oracle picks those up,
+builds the canonical Merkle root + memo, and submits to Solana.
 
-**Depends on #1, #2, #3.**
+**Depends on #1, #2, #3.** (BACHEM/SIGMA pause #4 should also be
+done before the scraper starts so the first scrape doesn't waste
+time hammering blocked vendors.)
 
-**Time:** ~30 minutes hands-on, plus ~3–5 min for the first deploy.
+**Time:** ~60 minutes hands-on, plus ~3–5 min per service's first
+build.
 
-**Cost:** ~$5–10/month marginal (per §07.4.1).
+**Cost:** $10–20/month marginal — Railway's $5/service Hobby tier
+× 2 services. Compute is trivial; ingress/egress is dominated by
+the Solana submit traffic at ~6 cycle commits/hour.
 
-### Note on deploy state
+**State you should be in before starting #5:**
+
+- New Supabase project from #1 exists at
+  `mnquozxfniasbpaavcos.supabase.co`, all migrations 0001–0032
+  applied.
+- Helius account from #2 exists and you have a working API key
+  (the same key works for devnet + mainnet).
+- Devnet keypair from #3 exists, base58 secret captured to your
+  password manager, devnet pubkey captured separately, and the
+  pubkey has been airdropped at least 1 SOL on devnet.
+- BACHEM/SIGMA pause from #4 has been applied.
+
+If any of those are missing, finish them before continuing — the
+runbook below assumes they're done.
+
+> **Note on the earlier setup.** The previous biohack.market
+> Railway deployment (api/scraper/worker against
+> `pjsjaspntdjecfitogtc.supabase.co`) was deleted entirely. This
+> §5 documents fresh deploys from scratch. The legacy Supabase
+> project is preserved read-only — do not point the new services
+> at it.
+
+> **Worker service deferred.** The `apps/worker/` service
+> (computes `peptide_twaps` from `supplier_observations` every
+> minute) is NOT in scope for this §5. Without the worker
+> running, no `peptide_twaps` rows are produced, so the oracle's
+> TWAP-commit poller will log heartbeats but find nothing to
+> commit (cycle commits still flow normally). Add the worker as
+> a third Railway service when you're ready to anchor TWAPs;
+> env-var shape mirrors the scraper's (same `SUPABASE_URL` +
+> `SUPABASE_SECRET_KEY`).
+
+### 5.1 Railway prerequisites
+
+- [ ] **Account.** Sign up at https://railway.com/ if you don't
+      have one. The Hobby plan ($5/seat/month) is fine for v1;
+      includes $5 of usage per service per month, which covers a
+      24/7 scraper + oracle at our cadence. Pro is overkill until
+      you need multi-region or higher concurrent build slots.
+
+- [ ] **GitHub OAuth.** From the Railway dashboard top-right →
+      **Account Settings → GitHub**, authorize Railway against
+      your GitHub account and grant access to the
+      `keycho/peptidefi` repo specifically. (Railway can also do
+      org-wide install; per-repo is tighter and recommended for
+      production secrets-bearing services.)
+
+- [ ] **Create a project.** Dashboard → **New Project →
+      Empty Project**. Name it `peptide-oracle` (or whatever you
+      already use; the project itself just groups services).
+
+- [ ] **Decide on a deploy branch.** Until the work merges to
+      `main`, point both services at
+      `claude/peptidefi-season-1-Hae69`. After merge, switch
+      both to `main` simultaneously (Railway → service Settings
+      → Source → branch).
+
+### 5.2 Scraper service
+
+**Deploy this first.** The oracle cycle-poller has nothing to
+pick up until the scraper has written at least one
+`scraper_runs` row with `status='completed'` (or `'partial'`)
+and ≥1 successful observation. With the scraper already running
+when you bring up the oracle, the first oracle tick will
+immediately find work.
+
+#### Steps
+
+- [ ] **Project → New Service → Deploy from GitHub repo**.
+      Select `keycho/peptidefi` and the branch chosen in §5.1.
+
+- [ ] **Service name**: `peptide-oracle-scraper` (matches the
+      historical naming pattern; Railway lets you rename later
+      if needed).
+
+- [ ] **Settings → Source**:
+      - Root directory: `/` (the monorepo root — the Dockerfile
+        needs access to `packages/` and the workspace lockfile).
+      - Watch paths (avoid redeploys when the oracle changes):
+        - `apps/scraper/**`
+        - `packages/**`
+        - `pnpm-lock.yaml`
+        - `pnpm-workspace.yaml`
+
+- [ ] **Settings → Build**:
+      - Builder: Dockerfile
+      - Dockerfile path: `apps/scraper/Dockerfile`
+
+- [ ] **Settings → Networking**: the scraper has a `/health`
+      endpoint but no public surface beyond that. **Don't
+      generate a public domain** unless you specifically want to
+      hit `/health` from outside Railway. The Railway internal
+      healthcheck (configured by `apps/scraper/railway.json`)
+      reaches it on the private network.
+
+#### Set environment variables
+
+In **Settings → Variables**, add the following one by one. Mark
+secrets with the lock icon (top-right of each variable's edit
+row). The canonical list is in `apps/scraper/.env.example` —
+this table is the operator-facing summary.
+
+| variable | value | secret? |
+|---|---|---|
+| `SUPABASE_URL` | `https://mnquozxfniasbpaavcos.supabase.co` | no |
+| `SUPABASE_SECRET_KEY` | service-role key from §1 (`sb_secret_…`) | **YES** |
+| `HEALTH_PORT` | `8080` | no |
+| `SCRAPER_CYCLE_INTERVAL_MS` | `600000` (10 min recommended for v1; 60000 = 1 min once vendors aren't rate-limiting) | no |
+| `SCRAPER_USE_PROXY` | `false` (start without proxy; flip to `true` only if Railway's egress IPs get datacenter-flagged by vendor anti-bot) | no |
+| `SCRAPINGANT_API_KEY` | leave unset unless `SCRAPER_USE_PROXY=true` | **YES (when set)** |
+| `GIT_SHA` | `${{RAILWAY_GIT_COMMIT_SHA}}` (Railway interpolates the actual commit; recorded in `scraper_runs.git_sha` for incident triage) | no |
+| `HOST_OVERRIDE` | optional; leave blank to fall back to `os.hostname()` | no |
+| `NODE_ENV` | `production` | no |
+
+#### What you should expect on first boot
+
+Click **Deploy**. Railway pulls the repo, runs `docker build`
+against `apps/scraper/Dockerfile`, then `pnpm start`. **Build
+time:** ~2–4 min for the cold cache; subsequent builds reuse
+layers in ~30–60s.
+
+Healthy startup logs (first few lines):
+
+```
+[startup] health endpoint on :8080/health
+[startup] scraper looping on 600000ms interval (--once for a single cycle)
+[cycle] run=<RUNID> status=completed <S>/<N> ok 0 failed <Xms>ms proxy=off
+```
+
+Each cycle line lands every `SCRAPER_CYCLE_INTERVAL_MS` (10 min
+default).
+
+#### Verification
+
+- [ ] First cycle completes within ~10 minutes of deploy.
+
+- [ ] In Supabase Dashboard → Table Editor → `scraper_runs`, you
+      see at least one row with `status='completed'` (or
+      `'partial'` if some vendors block) and `finished_at` set.
+
+- [ ] In Supabase Dashboard → Table Editor →
+      `supplier_observations`, you see ≥1 row whose
+      `scraper_run_id` matches that scraper_runs row, with
+      `scrape_success=true`.
+
+If `status='failed'` or all observations have
+`scrape_success=false`, vendors are blocking Railway's egress IP.
+Mitigations:
+
+- Try again in an hour (Cloudflare/Sucuri rate-limit windows
+  reset).
+- Set `SCRAPER_USE_PROXY=true` and add a `SCRAPINGANT_API_KEY`
+  (paid plan; ~$25/mo for our cadence).
+- Re-deploy the service to a different Railway region (Settings
+  → Region) — different egress IP pools.
+
+#### Common failure modes
+
+- **`SUPABASE_URL` typo points at the legacy biohack.market
+  project.** Symptom: scraper startup succeeds but writes go to
+  the wrong project. Pin `mnquozxfniasbpaavcos` in the env var
+  and double-check before saving.
+- **`SUPABASE_SECRET_KEY` is the anon key, not service-role.**
+  Symptom: writes fail with RLS errors despite the env var being
+  set. The service-role key is the one with `service_role` JWT
+  claim and bypasses RLS — fetch it from
+  Dashboard → Project Settings → API → "service_role secret",
+  not the anon-key row.
+- **Watch paths too narrow.** Forgetting `packages/**` means a
+  shared-package change won't trigger a scraper redeploy. Stale
+  `@peptide-oracle/shared` produces hard-to-debug runtime
+  errors.
+
+### 5.3 Oracle service
+
+Deploy this **after** the scraper has produced at least one
+qualifying `scraper_runs` row. With work already queued, the
+oracle's first tick picks it up immediately and you see the
+full lifecycle play out within ~30s.
+
+#### Note on deploy state
 
 The oracle service in `apps/oracle/` is implemented and ready to
 deploy as of Phase D (cycle commits + TWAP commits both verified
 end-to-end on devnet). The Dockerfile at `apps/oracle/Dockerfile`
 and the `apps/oracle/railway.json` config (Dockerfile builder,
 `pnpm start` start command, `/health` healthcheck) are wired so
-Railway can deploy directly from `claude/peptidefi-season-1-Hae69`
-or `main` once that branch is merged.
+Railway can deploy directly from the deploy branch chosen in §5.1.
 
 **Devnet vs mainnet.** Production deployment to mainnet should
 come AFTER a sustained devnet run with real scraped data — at
@@ -528,52 +714,40 @@ separate keypair from the production-published authority**
 on the devnet cluster and should never share a pubkey with the
 production attestation key.
 
-### Steps
+#### Steps
 
-- [ ] Open the Railway dashboard for the existing project at
-      https://railway.app/.
+- [ ] **Project → New Service → Deploy from GitHub repo**.
+      Same repo and branch as the scraper.
 
-- [ ] **New service → Deploy from GitHub repo**. Select the
-      `keycho/peptidefi` repo and the `main` branch.
+- [ ] **Service name**: `peptide-oracle-oracle`.
 
-- [ ] **Service name**: `peptide-oracle-oracle` (matches the
-      naming pattern of the existing services).
+- [ ] **Settings → Source**:
+      - Root directory: `/`.
+      - Watch paths: `apps/oracle/**`, `packages/**`,
+        `pnpm-lock.yaml`, `pnpm-workspace.yaml`.
 
-- [ ] In **Settings → Source**:
-      - **Root directory**: `/` (the monorepo root — the Dockerfile
-        needs access to `packages/` and the workspace lockfile).
-      - **Watch paths** (so a change to one service doesn't
-        redeploy the others):
-        - `apps/oracle/**`
-        - `packages/**`
-        - `pnpm-lock.yaml`
-        - `pnpm-workspace.yaml`
+- [ ] **Settings → Build**:
+      - Builder: Dockerfile
+      - Dockerfile path: `apps/oracle/Dockerfile`.
 
-- [ ] In **Settings → Build**:
-      - **Builder**: Dockerfile
-      - **Dockerfile path**: `apps/oracle/Dockerfile` (will exist
-        once the apps/oracle skeleton lands; for now the field can
-        be empty, which means Railway doesn't deploy yet)
-
-- [ ] In **Settings → Networking**:
-      - **Public Networking → Generate domain**. Take the default
+- [ ] **Settings → Networking**:
+      - Public Networking → **Generate domain**. Take the default
         `*.up.railway.app` URL or attach a custom domain like
-        `oracle.<your-domain>`. The custom domain is preferred for
-        the §9.4.7 publication channels — public-facing URL stays
-        stable across Railway redeployments.
+        `oracle.<your-domain>`. The custom domain is preferred
+        for the §9.4.7 publication channels — public-facing URL
+        stays stable across Railway redeployments.
 
-### Set environment variables
+#### Set environment variables
 
-In **Settings → Variables**, add the following one by one. **Mark
-secrets with the lock icon** as you add them (top-right of each
-variable's edit row).
+In **Settings → Variables**, add the following one by one. Mark
+secrets with the lock icon as you add them.
 
 | variable                          | value                                                                                                                | secret? |
 | --------------------------------- | -------------------------------------------------------------------------------------------------------------------- | ------- |
 | `ORACLE_SOLANA_PRIVATE_KEY`       | base58 64-byte secret from §3 (devnet shakedown: a SEPARATE devnet-only keypair, NOT the production-published one)   | **YES** |
 | `ORACLE_RPC_URL`                  | Helius URL — **devnet:** `https://devnet.helius-rpc.com/?api-key=<KEY>` ; **mainnet:** `https://mainnet.helius-rpc.com/?api-key=<KEY>` | **YES** |
 | `SUPABASE_URL`                    | `https://mnquozxfniasbpaavcos.supabase.co` (the new peptide-oracle project from §1)                                  | no      |
-| `SUPABASE_SECRET_KEY`             | service-role key from §1 (`sb_secret_…`)                                                                             | **YES** |
+| `SUPABASE_SECRET_KEY`             | service-role key from §1 (same value as the scraper's)                                                               | **YES** |
 | `ORACLE_DATABASE_URL`             | Supabase **session-mode** Postgres URL (port 5432, NOT pooler-transaction port 6543). Format: `postgresql://postgres.<ref>:<password>@aws-1-<region>.pooler.supabase.com:5432/postgres` | **YES** |
 | `HEALTH_PORT`                     | `8080`                                                                                                               | no      |
 | `ORACLE_BALANCE_WARN_SOL`         | `0.30` (per §07.2.2 26-peptide tuning)                                                                               | no      |
@@ -584,18 +758,38 @@ variable's edit row).
 | `PEPTIDE_ORACLE_AUTHORITY_PUBKEY` | the pubkey derived from `ORACLE_SOLANA_PRIVATE_KEY` (used as a startup cross-check; mismatch → service refuses to start) | no      |
 | `NODE_ENV`                        | `production`                                                                                                         | no      |
 
-### Verification
+#### What you should expect on first boot
 
-Once the apps/oracle skeleton lands and you trigger a deploy:
+Healthy startup logs:
 
-- [ ] **Logs** show:
+```
+[startup] oracle service starting (node=v20.x.x env=production)
+[startup] oracle wallet: <DEVNET PUBKEY>
+[startup] rpc=helius supabase=mnquozxfniasbpaavcos.supabase.co
+[startup] balance thresholds: warn<0.3 SOL critical<0.15 SOL min-startup<0.05 SOL
+[startup] health endpoint on :8080/health
+[startup] wallet balance: 1.000000 SOL (>= 0.05 SOL min)
+[startup] advisory lock acquired (single-instance enforced)
+[cycle-poller] started (interval=30000ms, phase C: full lifecycle pending → submitted → finalized)
+[twap-poller] started (tick=60000ms, enqueue at HH:00:30 UTC)
+[long-tail] started (interval=3600000ms, maxTotalRetries=20)
+```
 
-      ```
-      [startup] oracle wallet: <YOUR PUBKEY>
-      [startup] balance: 1.0000 SOL
-      [startup] balance check passed; starting pollers
-      [startup] health endpoint on :8080/health
-      ```
+If the scraper has already committed a cycle row before the
+oracle starts, expect the next tick to log the lifecycle:
+
+```
+[cycle-poller] cycle_id=<N> obs=<K> root=0x… memo_bytes=224
+[cycle-poller] cycle_id=<N> SUBMITTED sig=<SIG> priorityFee=1000µlamports/CU
+[cycle-poller] cycle_id=<N> FINALIZED slot=<SLOT> sig=<SIG>
+```
+
+**Build time:** ~3–5 min cold; ~30–60s incremental.
+
+#### Verification
+
+- [ ] **Logs** show all four lines from the healthy startup
+      transcript above.
 
 - [ ] **`/health` endpoint** responds with HTTP 200:
 
@@ -604,18 +798,35 @@ Once the apps/oracle skeleton lands and you trigger a deploy:
       ```
 
       Should return the §03.9.2 health snapshot with all required
-      fields. `wallet.public_key` matches your pubkey,
+      fields. `wallet.public_key` matches your devnet pubkey,
       `wallet.balance_sol` ≈ 1.0.
 
 - [ ] **`PEPTIDE_ORACLE_AUTHORITY_PUBKEY` env var matches the
-      `wallet.public_key` from `/health`.** (Sanity check that you
-      pasted the right pubkey into the env var as well.)
+      `wallet.public_key` from `/health`.** If this fails the
+      service crashes at startup with `[fatal] Authority pubkey
+      mismatch` — fix the env var and redeploy.
 
-### Common failure modes
+- [ ] **First cycle commit lands within ~30s of the scraper
+      writing a qualifying row.** Verify by polling
+      `commit_cycles` in Supabase: a row appears with the same
+      `cycle_id` as the scraper run, `status='pending'` first,
+      then `'submitted'` with `solana_signature` set, then
+      `'finalized'` with `solana_slot` set.
+
+- [ ] **Solscan devnet URL works.** Open
+      `https://solscan.io/tx/<SIG>?cluster=devnet` (substitute
+      the `solana_signature` from the row); the tx page shows
+      one ComputeBudget price ix, one ComputeBudget limit ix,
+      and one Memo ix. The Memo ix's "Memo" field is the
+      canonical JSON memo body; should byte-exactly match
+      `commit_cycles.memo_payload` for that row.
+
+#### Common failure modes
 
 - **Env var not flagged as secret.** `ORACLE_SOLANA_PRIVATE_KEY`,
   `SUPABASE_SECRET_KEY`, `ORACLE_RPC_URL` (because the API key is
-  embedded in the URL) all need the lock icon. Without it, the
+  embedded in the URL), and `ORACLE_DATABASE_URL` (database
+  password embedded) all need the lock icon. Without it, the
   value appears in plain text in the dashboard and shows up in
   redeploy diff logs.
 - **Wrong root directory.** If you set root to `apps/oracle/`,
@@ -624,6 +835,13 @@ Once the apps/oracle skeleton lands and you trigger a deploy:
 - **Watch paths missing `packages/**` or `pnpm-lock.yaml`.** The
   service won't redeploy when shared dependencies change, leading
   to stale-package mysteries during development.
+- **`ORACLE_DATABASE_URL` points at port 6543 (transaction-mode
+  pooler) instead of 5432 (session-mode).** Symptom: oracle
+  startup logs show advisory-lock acquisition succeeded, but
+  subsequent ticks log `pg_try_advisory_lock returned false`
+  intermittently. Transaction-mode pooler releases the lock
+  between statements; the oracle MUST use session-mode (port
+  5432).
 - **Custom domain DNS not propagated.** A custom domain
   (`oracle.<your-domain>`) needs a CNAME record pointing at
   Railway's edge. Propagation can take 5–60 min. If you publish
@@ -632,6 +850,12 @@ Once the apps/oracle skeleton lands and you trigger a deploy:
 - **Adding the secret env vars in screen-share / pair-programming
   context.** Don't paste these where someone else can see them.
   Set them solo.
+- **Mainnet Helius URL set on a devnet shakedown service.** The
+  cluster is implied by the URL — there's no runtime
+  cluster-selector flag — so a fat-finger of `mainnet.helius-rpc.com`
+  on the devnet shakedown service would submit a real mainnet
+  tx signed by your devnet key. Read the URL twice before
+  saving.
 
 ---
 
@@ -640,8 +864,9 @@ Once the apps/oracle skeleton lands and you trigger a deploy:
 Heartbeat monitoring on `/health` plus a public status page at
 `status.<your-domain>`.
 
-**Depends on #5.** The heartbeat target is the Railway oracle
-service URL.
+**Depends on #5** — specifically §5.3 (the oracle service must
+have a public domain). The heartbeat target is the Railway oracle
+service URL from §5.3.
 
 **Time:** ~45 minutes including SMS alert testing.
 
