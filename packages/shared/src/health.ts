@@ -90,6 +90,15 @@ function isHealthy(state: HealthState, staleAfterMs: number): boolean {
  * services use this between cycles so SIGTERM during a sleep doesn't
  * keep Railway waiting (the scraper's 10-min sleep would otherwise
  * blow past Railway's typical 30s deploy-shutdown grace period).
+ *
+ * Listener cleanup: both paths (timer-fire and abort-fire) explicitly
+ * detach the abort listener before resolving. The earlier
+ * `{ once: true }` form auto-removed only on abort; on the
+ * normal-completion path (timer fires first) the listener was
+ * orphaned. Each successful sleep leaked one listener on the shared
+ * shutdownAbort.signal — across a long-running poller this triggers
+ * Node's MaxListenersExceededWarning at 10 listeners and indicates
+ * a real (small but unbounded) memory leak.
  */
 export function sleepInterruptible(
   ms: number,
@@ -100,14 +109,19 @@ export function sleepInterruptible(
       resolve();
       return;
     }
-    const t = setTimeout(resolve, ms);
-    signal.addEventListener(
-      "abort",
-      () => {
-        clearTimeout(t);
-        resolve();
-      },
-      { once: true },
-    );
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const onAbort = (): void => {
+      if (timer !== null) {
+        clearTimeout(timer);
+        timer = null;
+      }
+      resolve();
+    };
+    timer = setTimeout(() => {
+      timer = null;
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal.addEventListener("abort", onAbort, { once: true });
   });
 }
