@@ -192,14 +192,54 @@ async function main(): Promise<void> {
         confirmationTimeoutMs: config.confirmation.timeoutMs,
       }),
     ]);
-    console.log("[shutdown] all pollers exited; closing health server");
+    console.log("[shutdown] all pollers exited");
   } finally {
-    await new Promise<void>((resolve) => healthServer.close(() => resolve()));
-    // Release the advisory lock before the pool closes — the lock
-    // lives on a reserved connection from the pool, so it has to
-    // come first.
-    await lock.release();
-    await sql.end({ timeout: 5 });
+    // Shutdown sequence — each step independently fault-tolerant so a
+    // crash in one doesn't prevent the others. Order matters:
+    //
+    //   1. Release the advisory lock (sends pg_advisory_unlock + frees
+    //      the reserved connection). Done BEFORE sql.end so the unlock
+    //      query lands on a still-open connection.
+    //   2. Close the postgres pool with a 5s drain timeout — gives any
+    //      setImmediate-queued writes from the lock-release path time
+    //      to flush before the underlying sockets are torn down. (The
+    //      previous shutdown order — health server first, then lock,
+    //      then sql.end — was crashing in postgres@3.4.9 with
+    //      "Cannot read properties of null (reading 'write')" at
+    //      connection.js:255, a queued write firing post-close.)
+    //   3. Close the health server LAST. Railway has already removed
+    //      the service from the load balancer once SIGTERM fired, so
+    //      keeping /health responsive through the DB cleanup phase is
+    //      harmless; if anything it makes diagnosing slow shutdowns
+    //      easier.
+    //
+    // Each step is wrapped in its own try/catch so a thrown error
+    // logs + flows through to the next step rather than aborting the
+    // shutdown halfway. A clean exit is more important than perfect
+    // cleanup at this point.
+    try {
+      await lock.release();
+      console.log("[shutdown] advisory lock released");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`[shutdown] lock release failed: ${msg}`);
+    }
+    try {
+      await sql.end({ timeout: 5 });
+      console.log("[shutdown] postgres pool closed");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`[shutdown] sql.end failed: ${msg}`);
+    }
+    try {
+      await new Promise<void>((resolve, reject) => {
+        healthServer.close((err) => (err ? reject(err) : resolve()));
+      });
+      console.log("[shutdown] health server closed");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`[shutdown] health server close failed: ${msg}`);
+    }
     console.log("[shutdown] clean exit");
   }
 }
