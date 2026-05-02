@@ -488,6 +488,129 @@ fails verification.
 **Post-incident.** Always write up — verification mismatches are
 exactly the kind of incident that erodes trust if handled silently.
 
+### 8.5.7 Ghost advisory lock after ungraceful shutdown
+
+**Symptom.** The oracle service fails to start with:
+
+```
+[fatal] advisory-lock: another oracle instance is already running
+(pg_try_advisory_lock returned false). If you're sure no other
+instance exists, the previous process may have crashed without
+releasing — restart Postgres or kill the holding session via
+pg_stat_activity.
+```
+
+There is no other oracle process running (you can confirm via
+Railway dashboard → service Deployments — only one is active).
+
+**Why it happens.** The oracle holds the §3.8.1 single-instance
+advisory lock on a connection reserved from the postgres.js pool
+(`apps/oracle/src/advisory-lock.ts`). When the oracle exits
+cleanly via SIGTERM, its shutdown path calls
+`pg_advisory_unlock` and releases the connection — the lock is
+freed immediately.
+
+When the oracle exits **without** the SIGTERM path running
+(uncaught exception, OOM, Railway force-kill exceeding the grace
+window), the TCP connection from the oracle to Supabase's
+**Supavisor pooler** dies — but Supavisor keeps the underlying
+PG backend alive in its pool for connection reuse. The session
+sits idle, but the advisory lock is session-scoped and stays
+held. The next oracle startup's `pg_try_advisory_lock` returns
+false, and the new instance refuses to start.
+
+The startup retry-with-backoff added in commit `<COMMIT-SHA>`
+covers brief Supavisor cleanup windows (Supavisor closes idle
+sessions after ~15 minutes by default), so a fresh redeploy in
+the middle of an old session's idle timeout will normally
+self-resolve. The procedure below is the manual escalation when
+you don't want to wait for Supavisor's idle cleanup.
+
+**Recovery — three SQL statements via the Supabase Management API
+or Dashboard SQL Editor.** The advisory-lock keys are
+`(0xC0117EE5, 0xC0117EE5)` (`apps/oracle/src/advisory-lock.ts`).
+`pg_locks.classid` and `pg_locks.objid` are `oid` columns
+(unsigned 32-bit), so the WHERE clause compares against the
+unsigned decimal `3222372069::oid`. `objsubid=2` selects the
+two-int4 advisory-lock variant (variant 1 is the
+single-bigint form that we don't use).
+
+**Step 1 — identify the holder:**
+
+```sql
+SELECT a.pid, a.usename, a.application_name, a.state,
+       a.backend_start, a.state_change, l.granted
+FROM   pg_stat_activity a
+JOIN   pg_locks l ON l.pid = a.pid
+WHERE  l.locktype = 'advisory'
+  AND  l.classid  = 3222372069::oid
+  AND  l.objid    = 3222372069::oid
+  AND  l.objsubid = 2;
+```
+
+Expected row: `application_name='Supavisor'`, `state='idle'`,
+`backend_start` matches the previous failed deploy's startup
+time. If this returns ZERO rows, the lock isn't actually held —
+the symptom is something else; investigate elsewhere.
+
+**Step 2 — terminate the holder:**
+
+```sql
+SELECT l.pid, pg_terminate_backend(l.pid) AS terminated
+FROM   pg_locks l
+WHERE  l.locktype = 'advisory'
+  AND  l.classid  = 3222372069::oid
+  AND  l.objid    = 3222372069::oid
+  AND  l.objsubid = 2;
+```
+
+`pg_terminate_backend` returns `true` on success. The PG backend
+is killed; Supavisor's pool entry is dropped; the
+session-scoped advisory lock is released.
+
+**Step 3 — verify the lock is gone:**
+
+```sql
+SELECT count(*)::int AS remaining
+FROM   pg_locks
+WHERE  locktype = 'advisory'
+  AND  classid  = 3222372069::oid
+  AND  objid    = 3222372069::oid
+  AND  objsubid = 2;
+```
+
+Expected: `remaining = 0`. (Allow ~1–2 seconds between Step 2
+and Step 3 — Supavisor's bookkeeping isn't synchronous.)
+
+**Then redeploy the oracle in Railway.** Startup
+`pg_try_advisory_lock` will succeed and the pollers start.
+
+**Common pitfalls.**
+
+- **Wrong type cast.** Filtering on `classid = 0xC0117EE5` (or
+  the signed-int4 form) returns zero rows because PG's `oid` is
+  unsigned 32-bit. Always use `::oid` in the comparison.
+- **Wrong objsubid.** `objsubid=1` is the
+  `pg_try_advisory_lock(bigint)` variant; we use the two-int4
+  form (`objsubid=2`). Filtering on `objsubid=1` returns zero
+  rows.
+- **Querying a different DB.** The Mgmt API connects to the
+  project's primary; if you're inspecting a read replica via
+  some other route the locks won't appear.
+
+**Post-incident.** Always investigate why the previous oracle
+shutdown was ungraceful:
+
+- Railway logs for the previous deployment: was there a SIGKILL
+  (force exit), an uncaught exception, or an OOMKilled signal?
+- If repeated: bump the Railway service's "stop signal grace
+  period" (Settings → Deploy → Stop Signal) to 60s so SIGTERM
+  has time to drain the cycle poller's 90s confirmation
+  polling. The cycle poller's tick is interruptible; the
+  in-flight confirmation polling is the slow part.
+- File an issue if the root cause is in oracle code (a code
+  path that doesn't return on `abortSignal.aborted`, e.g.).
+
 ## 8.6 Keypair rotation procedure
 
 Reference §03.5.4 for the short version; this section is the full
