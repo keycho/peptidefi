@@ -14,7 +14,7 @@ import {
 } from "../db/cycle-state";
 import type { SqlClient } from "../db/client";
 import { buildCycleCommitFromObservations } from "../memo";
-import { buildMerkleTree } from "../merkle";
+import { buildMerkleTree } from "@peptide-oracle/shared";
 import type { OracleHealthState } from "../health";
 import { isFinalized, type OracleSolanaClient } from "../solana/client";
 import type { Keypair } from "@solana/web3.js";

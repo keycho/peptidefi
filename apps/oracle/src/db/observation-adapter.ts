@@ -1,4 +1,4 @@
-import type { Observation } from "../canonical";
+import type { Observation } from "@peptide-oracle/shared";
 
 /**
  * PG row → canonical Observation adapter.

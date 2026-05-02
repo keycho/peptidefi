@@ -5,7 +5,7 @@ import {
   hex0xToBytes,
   innerHash,
   leafHash,
-} from "../merkle";
+} from "@peptide-oracle/shared";
 import {
   SPEC_INNER_HASHES,
   SPEC_LEAF_HASHES,

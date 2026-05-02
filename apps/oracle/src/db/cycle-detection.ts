@@ -3,7 +3,7 @@ import {
   rowToObservation,
   type SupplierObservationRow,
 } from "./observation-adapter";
-import type { Observation } from "../canonical";
+import type { Observation } from "@peptide-oracle/shared";
 
 /**
  * Cycle detection + observation fetch for the cycle poller.

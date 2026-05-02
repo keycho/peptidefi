@@ -4,6 +4,16 @@ import cors from "cors";
 import { corsOptions } from "./cors-config";
 import { vendorLeaderboardHandler } from "./routes/vendors";
 import { arbitrageHandler } from "./routes/arbitrage";
+import { authorityHandler } from "./routes/v1/authority";
+import { statusHandler } from "./routes/v1/status";
+import {
+  getPeptideHandler,
+  listPeptidesHandler,
+} from "./routes/v1/peptides";
+import { getCycleHandler, listCyclesHandler } from "./routes/v1/cycles";
+import { getObservationHandler } from "./routes/v1/observations";
+import { getTwapHandler } from "./routes/v1/twaps";
+import { verifyObservationHandler } from "./routes/v1/verify";
 
 /**
  * peptide-oracle API — Express server.
@@ -56,6 +66,19 @@ function requestShutdown(signal: string): void {
 process.on("SIGINT", () => requestShutdown("SIGINT"));
 process.on("SIGTERM", () => requestShutdown("SIGTERM"));
 
+/**
+ * Wraps an async route handler so a thrown error (or rejected
+ * promise) is forwarded to Express's error middleware via next(err)
+ * instead of being lost in an unhandled rejection.
+ */
+function asyncRoute(
+  fn: (req: express.Request, res: express.Response) => Promise<void> | void,
+): express.RequestHandler {
+  return (req, res, next) => {
+    Promise.resolve(fn(req, res)).catch(next);
+  };
+}
+
 function buildApp(): express.Express {
   const app = express();
   app.disable("x-powered-by");
@@ -95,6 +118,20 @@ function buildApp(): express.Express {
   // Public oracle reads (no auth).
   app.get("/vendors/leaderboard", vendorLeaderboardHandler);
   app.get("/arbitrage", arbitrageHandler);
+
+  // ─── Phase E verification surface (§05.4 + §05.5) ────────────────
+  // /authority is the trust-anchor endpoint — what every verifier
+  // hits first to learn which Solana cluster + signing pubkey to
+  // expect. /v1/* are the read + verify endpoints.
+  app.get("/authority", asyncRoute(authorityHandler));
+  app.get("/v1/status", asyncRoute(statusHandler));
+  app.get("/v1/peptides", asyncRoute(listPeptidesHandler));
+  app.get("/v1/peptides/:id", asyncRoute(getPeptideHandler));
+  app.get("/v1/cycles", asyncRoute(listCyclesHandler));
+  app.get("/v1/cycles/:id", asyncRoute(getCycleHandler));
+  app.get("/v1/observations/:id", asyncRoute(getObservationHandler));
+  app.get("/v1/twaps/:id", asyncRoute(getTwapHandler));
+  app.get("/v1/verify/observation/:id", asyncRoute(verifyObservationHandler));
 
   app.use((_req, res) => {
     res.status(404).json({ code: "NOT_FOUND", message: "no such route" });

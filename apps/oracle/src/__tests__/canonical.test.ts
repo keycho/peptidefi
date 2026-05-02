@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { canonicalObservationJson, OBSERVATION_FIELDS } from "../canonical";
+import { canonicalObservationJson, OBSERVATION_FIELDS } from "@peptide-oracle/shared";
 import { SPEC_OBS_1, SPEC_OBS_1_CANONICAL_JSON } from "./fixtures";
 
 describe("canonicalObservationJson", () => {

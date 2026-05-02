@@ -3,7 +3,7 @@ import {
   rowToObservation,
   type SupplierObservationRow,
 } from "./observation-adapter";
-import type { Observation } from "../canonical";
+import type { Observation } from "@peptide-oracle/shared";
 
 /**
  * Detection + row-fetch queries for the TWAP poller (§3.3).
