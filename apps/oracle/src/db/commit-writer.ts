@@ -75,10 +75,24 @@ export async function registerCommitCycle(
   sql: SqlClient,
   args: RegisterCommitCycleArgs,
 ): Promise<void> {
-  // Build the jsonb leaves array. The PG function explodes this via
-  // jsonb_array_elements and inserts one row per element.
-  const leavesJson = JSON.stringify(args.leaves);
-
+  // Bind args.leaves as a jsonb wire-protocol parameter via sql.json().
+  // The PG function explodes it via jsonb_array_elements and inserts
+  // one row per element.
+  //
+  // DO NOT pass JSON.stringify(args.leaves) here: postgres.js binds JS
+  // strings as text, and the PG-side `text::jsonb` cast on a string
+  // that contains JSON (e.g. '[{"observation_id":...}]') was observed
+  // in production to arrive at the function as a JSON-quoted scalar
+  // ("[{...}]") rather than a JSON array, causing
+  // `jsonb_array_length` to throw "cannot get array length of a
+  // scalar". sql.json() is the canonical pattern: it sends the value
+  // with the jsonb type oid (3802) and serializes via the postgres.js
+  // json type's JSON.stringify path exactly once.
+  //
+  // Phase B/C/D smoke tests didn't catch this because they drove the
+  // function via the Supabase Management API (HTTP+inlined SQL with
+  // explicit single-quote literals), not via postgres.js's tagged-
+  // template parameter binding.
   await sql`
     SELECT public.register_commit_cycle(
       ${args.cycle_id}::bigint,
@@ -87,7 +101,7 @@ export async function registerCommitCycle(
       ${args.observation_count}::integer,
       ${args.merkle_root}::text,
       ${args.memo_payload}::text,
-      ${leavesJson}::jsonb
+      ${sql.json(args.leaves)}
     )
   `;
 }
