@@ -20,7 +20,7 @@ of date.
 | 2 | Helius account + API key           | yes          | 5 min   | email     | free tier           |
 | 3 | Oracle keypair generated + funded  | yes          | 30 min  | tx confirm| 1.0 SOL one-time (~$200 @ $200/SOL) |
 | 4 | BACHEM/SIGMA suppliers paused      | needs #1     | 2 min   | none      | free                |
-| 5 | Railway scraper + oracle services  | needs #1,2,3 | 60 min  | 2 deploys | $10–20/mo marginal  |
+| 5 | Railway scraper + oracle + api services | needs #1,2,3 | 75 min  | 3 deploys | $15–25/mo marginal  |
 | 6 | Better Stack monitoring + status   | needs #5     | 45 min  | SMS test  | free tier           |
 | 7 | Authority pubkey publication       | needs #3     | 30 min  | none      | free                |
 | 8 | Documentation site live            | yes          | varies  | depends   | free–$X/mo          |
@@ -496,24 +496,29 @@ suppliers whose scrapers never produce successful observations
 
 ---
 
-## 5. Railway services configured (scraper + oracle)
+## 5. Railway services configured (scraper + oracle + api)
 
-The scraper and the oracle deploy as **two separate Railway
-services in one Railway project**, both built from the
-`keycho/peptidefi` monorepo. The scraper runs continuously,
-writing observation rows to Supabase. The oracle picks those up,
-builds the canonical Merkle root + memo, and submits to Solana.
+The scraper, oracle, and verification api deploy as **three separate
+Railway services in one Railway project**, all built from the
+`keycho/peptidefi` monorepo. The scraper runs continuously, writing
+observation rows to Supabase. The oracle picks those up, builds the
+canonical Merkle root + memo, and submits to Solana. The api serves
+read-only verification endpoints over HTTPS that let downstream
+consumers (the frontend, third-party integrators, paranoid verifiers)
+walk from any observation back to its on-chain commit.
 
 **Depends on #1, #2, #3.** (BACHEM/SIGMA pause #4 should also be
 done before the scraper starts so the first scrape doesn't waste
 time hammering blocked vendors.)
 
-**Time:** ~60 minutes hands-on, plus ~3–5 min per service's first
+**Time:** ~75 minutes hands-on, plus ~3–5 min per service's first
 build.
 
-**Cost:** $10–20/month marginal — Railway's $5/service Hobby tier
-× 2 services. Compute is trivial; ingress/egress is dominated by
-the Solana submit traffic at ~6 cycle commits/hour.
+**Cost:** $15–25/month marginal — Railway's $5/service Hobby tier
+× 3 services. Compute is trivial; ingress/egress is dominated by
+the Solana submit traffic at ~6 cycle commits/hour. The api's
+read traffic is bounded by the frontend's polling cadence — at v1
+volumes (~hundreds of /v1/cycles requests/day) it's negligible.
 
 **State you should be in before starting #5:**
 
@@ -856,6 +861,215 @@ oracle starts, expect the next tick to log the lifecycle:
   on the devnet shakedown service would submit a real mainnet
   tx signed by your devnet key. Read the URL twice before
   saving.
+
+### 5.4 Verification API service
+
+Deploy this **after** the oracle has finalized at least one cycle
+commit. The api is a read-only HTTPS surface over the same Supabase
+project + the same Solana cluster the oracle writes to — it has no
+signing keys, no DB writes, and its security profile is much lower
+than the oracle's. Restart impact is also low: a redeploy briefly
+returns 502s but causes no data inconsistency.
+
+#### Note on deploy state
+
+The verification API in `apps/api/` ships nine endpoints per spec
+§05.4 + §05.5: trust-anchor (`/authority`), oracle health
+(`/v1/status`), discovery + history (`/v1/peptides`,
+`/v1/peptides/:id`), commit reads (`/v1/cycles`, `/v1/cycles/:id`,
+`/v1/observations/:id`, `/v1/twaps/:id`), and a server-side
+end-to-end verifier (`/v1/verify/observation/:id`) that runs all
+eight §5.5.1 checks including byte-exact on-chain memo comparison.
+The Dockerfile at `apps/api/Dockerfile` and `apps/api/railway.json`
+(Dockerfile builder, `pnpm start` start command, `/health`
+healthcheck, 30s timeout) are wired to deploy directly from the
+deploy branch chosen in §5.1.
+
+The api inherits the oracle's `cluster` choice — if the oracle is
+running on devnet, the api should point at devnet too. The
+`/authority` endpoint advertises the cluster + signing pubkey
+publicly, so a devnet-shakedown api advertises the **devnet** key
+(not the production-published one). That's intentional: it lets
+verifiers learn the test environment's trust anchor without
+manually configuring it.
+
+#### Steps
+
+- [ ] **Project → New Service → Deploy from GitHub repo**.
+      Same repo and branch as scraper + oracle.
+
+- [ ] **Service name**: `peptide-oracle-api`.
+
+- [ ] **Settings → Source**:
+      - Root directory: `/`.
+      - Watch paths: `apps/api/**`, `packages/**`,
+        `pnpm-lock.yaml`, `pnpm-workspace.yaml`.
+
+- [ ] **Settings → Build**:
+      - Builder: Dockerfile
+      - Dockerfile path: `apps/api/Dockerfile`.
+
+- [ ] **Settings → Networking**:
+      - Public Networking → **Generate domain**. The api needs a
+        public URL — this is what the frontend hits. Take the
+        default `*.up.railway.app` URL or attach a custom domain
+        like `api.<your-domain>`. Custom domain is preferred long-
+        term: it's part of §07 / §09.4.7 publication channels and
+        stable across Railway redeploys.
+
+#### Set environment variables
+
+In **Settings → Variables**, add the following one by one. Mark
+secrets with the lock icon as you add them.
+
+| variable                          | value                                                                                                                | secret? |
+| --------------------------------- | -------------------------------------------------------------------------------------------------------------------- | ------- |
+| `SUPABASE_URL`                    | `https://mnquozxfniasbpaavcos.supabase.co` (same as scraper / oracle)                                                | no      |
+| `SUPABASE_SECRET_KEY`             | service-role key from §1 (same value as scraper / oracle; the api uses it for trusted reads, not writes)             | **YES** |
+| `ORACLE_RPC_URL`                  | Same Helius URL as the oracle service. **devnet:** `https://devnet.helius-rpc.com/?api-key=<KEY>` ; **mainnet:** `https://mainnet.helius-rpc.com/?api-key=<KEY>`. The api makes read-only `getTransaction` / `getBalance` / `getSignaturesForAddress` calls — no signing, no submit. | **YES** |
+| `PEPTIDE_ORACLE_AUTHORITY_PUBKEY` | Same pubkey as the oracle service's matching env var. The api returns this on `GET /authority` and checks the `signer_matches_authority` step in `/v1/verify/*`. **Mismatch with the oracle** → every verification fails the signer check; the value MUST be identical between services. | no      |
+| `API_PORT`                        | `3000` (Railway also auto-injects `PORT`, which takes precedence; setting `API_PORT` keeps the local-dev workflow consistent)                                                                | no      |
+| `CORS_ORIGINS`                    | comma-separated extra origins to allow beyond the baked-in localhost + `*.lovable.{app,dev,project.com}` patterns; leave blank for v1 unless you need a staging custom domain | no      |
+| `NODE_ENV`                        | `production`                                                                                                         | no      |
+
+⚠ **`PEPTIDE_ORACLE_AUTHORITY_PUBKEY` consistency.** The api and
+oracle services need this set to the **same value**. The simplest
+operational pattern: when you generate the devnet keypair (§3,
+sub-bullet about devnet shakedown), capture the pubkey to your
+password manager and paste it into both services. A future Railway
+"shared variable" feature would let us reference this from one
+place; until then, a single typo on either side breaks every
+verification with `signer_matches_authority: false`.
+
+#### What you should expect on first boot
+
+Healthy startup logs:
+
+```
+[startup] api listening on :3000, /health on same port, auth=jose-ES256-jwks
+```
+
+(Single line — the api has no pollers, no startup checks beyond
+binding the port. Express + the lazy supabase / Solana clients
+mean the first request triggers actual configuration validation.)
+
+**Build time:** ~2–4 min cold; ~30–60s incremental.
+
+#### Verification
+
+- [ ] **Logs** show the single startup line above.
+
+- [ ] **`/health` responds with HTTP 200** without env-var
+      validation:
+
+      ```bash
+      curl https://api.<domain>/health
+      ```
+
+      Returns the api's CORS + auth metadata snapshot. /health is
+      decoupled from the oracle env vars on purpose so a missing
+      `ORACLE_RPC_URL` doesn't make the entire service unhealthy
+      from Railway's perspective.
+
+- [ ] **`/authority` matches the oracle**:
+
+      ```bash
+      curl https://api.<domain>/authority | jq
+      ```
+
+      Should return:
+      ```json
+      {
+        "service": "peptide-oracle",
+        "protocol_version": 1,
+        "cluster": "devnet",          // matches oracle's ORACLE_RPC_URL
+        "oracle_authority_pubkey": "...", // matches oracle's authority
+        "memo_program_id": "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr",
+        ...
+      }
+      ```
+
+      Cross-check the `oracle_authority_pubkey` against the oracle
+      service's `/health` response (`wallet.public_key` field)
+      — they must be identical.
+
+- [ ] **`/v1/status` aggregates work + on-chain reads succeed**:
+
+      ```bash
+      curl https://api.<domain>/v1/status | jq
+      ```
+
+      Should return cycle + TWAP commit counts (matching the
+      oracle's view), the wallet's current balance, and a
+      non-null `recent_signatures_count`. If `wallet_balance_sol`
+      is null but counts are populated, the Helius RPC URL is
+      reachable for reads but maybe rate-limited; non-fatal.
+
+- [ ] **Fetch a known finalized cycle**:
+
+      ```bash
+      curl https://api.<domain>/v1/cycles/1 | jq
+      ```
+
+      Returns the cycle row + its junction observations + memo
+      payload + Solscan URL. Click the Solscan URL — the on-chain
+      Memo's text should match the `memo_payload` field byte-exact.
+
+- [ ] **End-to-end verify**:
+
+      Pick an observation from the response above
+      (`observations[0].observation_id`), then:
+
+      ```bash
+      curl https://api.<domain>/v1/verify/observation/<OBS_ID> | jq
+      ```
+
+      Expected: `{"verified": true, ...}` with all 8 §5.5.1 checks
+      passing. If any check fails, the response includes
+      `failure_reason` + `failure_detail` that points at the
+      mismatch (most likely: `signer_matches_authority` false →
+      `PEPTIDE_ORACLE_AUTHORITY_PUBKEY` typo).
+
+#### Common failure modes
+
+- **`PEPTIDE_ORACLE_AUTHORITY_PUBKEY` mismatch with the oracle.**
+  Symptom: `/v1/verify/observation/:id` returns
+  `verified: false, failure_reason: "signer_matches_authority"`
+  with `failure_detail` showing the on-chain signers vs the
+  configured pubkey. Fix: copy the exact pubkey value from the
+  oracle service's env (or its `/health` `wallet.public_key`).
+
+- **`ORACLE_RPC_URL` cluster mismatch with the oracle's signed
+  transactions.** Symptom: `/v1/verify/observation/:id` returns
+  `failure_reason: "memo_matches_onchain"` with
+  `failure_detail: "on-chain tx ... not found at finalized
+  commitment"`. The signature was signed for one cluster but the
+  api is reading from another. Fix: point both services at the
+  same cluster.
+
+- **Service-role key from the wrong project.** Symptom:
+  `/v1/cycles` returns 500 with PostgREST errors about missing
+  tables. The key authenticates against whichever project's auth
+  endpoint it was issued from. Fix: re-fetch from
+  `mnquozxfniasbpaavcos` Dashboard → Project Settings → API.
+
+- **`SUPABASE_URL` typo to the legacy biohack.market project.**
+  Symptom: queries succeed but return zero rows for everything
+  (legacy project doesn't have the new commit_cycles / twap_commits
+  tables — schema 0031 / 0032 was never applied there). Fix: pin
+  `mnquozxfniasbpaavcos` and double-check before saving.
+
+- **CORS rejects the frontend in prod.** Symptom: browser console
+  shows "blocked by CORS policy". The static allow-list covers
+  localhost + `*.lovable.{app,dev,project.com}`; if the frontend
+  is hosted elsewhere, add the origin to `CORS_ORIGINS` (comma-
+  separated list, exact match).
+
+- **Custom domain DNS not propagated.** A custom domain
+  (`api.<your-domain>`) needs a CNAME record pointing at
+  Railway's edge. Propagation can take 5–60 min. The
+  `*.up.railway.app` Railway-assigned URL works during this
+  window; just don't bake it into clients you can't update later.
 
 ---
 
