@@ -26,7 +26,7 @@ of date.
 | 2 | Helius account + API key           | yes          | 5 min   | email     | free tier           |
 | 3 | Oracle keypair generated + funded  | yes          | 30 min  | tx confirm| 1.0 SOL one-time (~$200 @ $200/SOL) |
 | 4 | BACHEM/SIGMA suppliers paused      | needs #1     | 2 min   | none      | free                |
-| 5 | Railway scraper + oracle + api services | needs #1,2,3 | 75 min  | 3 deploys | $15–25/mo marginal  |
+| 5 | Railway scraper + oracle + api + worker services | needs #1,2,3 | 90 min  | 4 deploys | $20–30/mo marginal  |
 | 6 | Better Stack monitoring + status   | needs #5     | 45 min  | SMS test  | free tier           |
 | 7 | Authority pubkey publication       | needs #3     | 30 min  | none      | free                |
 | 8 | Documentation site live            | yes          | varies  | depends   | free–$X/mo          |
@@ -502,29 +502,42 @@ suppliers whose scrapers never produce successful observations
 
 ---
 
-## 5. Railway services configured (scraper + oracle + api)
+## 5. Railway services configured (scraper + oracle + api + worker)
 
-The scraper, oracle, and verification api deploy as **three separate
-Railway services in one Railway project**, all built from the
-`keycho/peptidefi` monorepo. The scraper runs continuously, writing
-observation rows to Supabase. The oracle picks those up, builds the
-canonical Merkle root + memo, and submits to Solana. The api serves
-read-only verification endpoints over HTTPS that let downstream
-consumers (the frontend, third-party integrators, paranoid verifiers)
-walk from any observation back to its on-chain commit.
+The scraper, oracle, verification api, and TWAP worker deploy as
+**four separate Railway services in one Railway project**, all
+built from the `keycho/peptidefi` monorepo. The scraper runs
+continuously, writing observation rows to Supabase. The worker also
+runs continuously (per-minute), computing time-weighted averages
+from those observations and writing `peptide_twaps` rows. The
+oracle picks up scrape cycles + the latest `peptide_twaps` rows,
+builds the canonical Merkle roots + memos, and submits them to
+Solana. The api serves read-only verification endpoints over HTTPS
+that let downstream consumers (the frontend, third-party
+integrators, paranoid verifiers) walk from any observation back to
+its on-chain commit.
+
+The compute layer (worker) is **decoupled** from the commit layer
+(oracle). Worker writes `peptide_twaps` continuously at per-minute
+cadence; oracle's twap-poller harvests one row per active peptide
+per hour at HH:00:30 UTC for on-chain commit. This lets the api
+serve a fresh TWAP at any moment (worker's most recent row) while
+keeping on-chain footprint bounded (one commit per peptide per
+hour). See §3.3 of the spec for the architecture rationale.
 
 **Depends on #1, #2, #3.** (BACHEM/SIGMA pause #4 should also be
 done before the scraper starts so the first scrape doesn't waste
 time hammering blocked vendors.)
 
-**Time:** ~75 minutes hands-on, plus ~3–5 min per service's first
+**Time:** ~90 minutes hands-on, plus ~3–5 min per service's first
 build.
 
-**Cost:** $15–25/month marginal — Railway's $5/service Hobby tier
-× 3 services. Compute is trivial; ingress/egress is dominated by
-the Solana submit traffic at ~6 cycle commits/hour. The api's
-read traffic is bounded by the frontend's polling cadence — at v1
-volumes (~hundreds of /v1/cycles requests/day) it's negligible.
+**Cost:** $20–30/month marginal — Railway's $5/service Hobby tier
+× 4 services. Compute is trivial across all four; ingress/egress
+is dominated by the Solana submit traffic at ~6 cycle commits/hour
++ ~26 TWAP commits/hour. The api's read traffic is bounded by the
+frontend's polling cadence — at v1 volumes (~hundreds of
+/v1/cycles requests/day) it's negligible.
 
 **State you should be in before starting #5:**
 
@@ -1076,6 +1089,237 @@ mean the first request triggers actual configuration validation.)
   Railway's edge. Propagation can take 5–60 min. The
   `*.up.railway.app` Railway-assigned URL works during this
   window; just don't bake it into clients you can't update later.
+
+### 5.5 TWAP Worker service
+
+The worker continuously computes per-peptide TWAPs from the
+observations the scraper writes, populating `peptide_twaps`. The
+oracle's twap-poller (built in §3.3) harvests the latest row per
+active peptide at HH:00:30 UTC and submits it on-chain. Without the
+worker running, `peptide_twaps` stays empty, the oracle's TWAP
+poller logs `skipped_no_twap=N` every hour, and no TWAP commits
+land. Cycle commits are unaffected.
+
+#### Service overview
+
+The worker is the simplest of the four services from a security
+perspective:
+
+- **No signing keys.** Doesn't touch Solana — reads observations
+  from Postgres, writes computed TWAPs back to Postgres.
+- **No public network surface.** Only `/health` is exposed for
+  Railway's deploy check; no public domain needed.
+- **No advisory lock.** The worker is stateless between cycles —
+  each per-minute run is independent. A redeploy doesn't have the
+  ghost-lock recovery flow that sometimes bites the oracle (§8.5.7).
+- **Per-cycle idempotency.** `peptide_twaps` has
+  `unique(peptide_id, computed_at)` and `computed_at` is rounded
+  to the start of the current UTC minute, so a re-run within the
+  same minute is a no-op `INSERT ... ON CONFLICT DO NOTHING`.
+
+#### Cadence + architecture
+
+The actual worker runs **per-minute** (`WORKER_CYCLE_INTERVAL_MS=60000`),
+not hourly. Each cycle:
+
+1. For each `is_active=true` peptide, walk every active supplier
+   that has any successful observation with a non-null price.
+2. Take the SINGLE most-recent successful observation per
+   (peptide, supplier) pair, regardless of when it occurred.
+3. Drop any observation older than `WORKER_FRESHNESS_CEILING_MS`
+   (default **30 minutes**) — beyond that the data is too stale to
+   publish; the worker writes a thin-data row with
+   `twap_usd_per_mg=NULL` rather than show last-week's prices.
+4. If 2+ suppliers reported fresh-enough, compute the median across
+   them; otherwise emit a thin-data row.
+5. Write to `peptide_twaps`. The oracle's twap-poller picks up the
+   row matching the next hour boundary.
+
+The "Option B decoupled" design (per `apps/worker/src/run.ts`
+header) means the worker is robust to scrape-cadence changes and
+short scraper outages: as long as each supplier produced
+SOMETHING within the freshness ceiling, the TWAP gets computed.
+Trade-off: write throughput on `peptide_twaps` is high (one row
+per active peptide per minute = ~26 rows/min ≈ 37k rows/day at v1
+scale).
+
+#### Steps
+
+- [ ] **Project → New Service → Deploy from GitHub repo**.
+      Same repo and branch as scraper / oracle / api.
+
+- [ ] **Service name**: `peptide-oracle-worker` (matches the
+      historical naming pattern; like the other three, the npm
+      package + Railway service names retain the `peptide-oracle`
+      identifier — the BioHash rebrand is human-facing only,
+      service-level rename is a future refactor).
+
+- [ ] **Settings → Source**:
+      - Root directory: `/`.
+      - Watch paths (avoid redeploys when sibling services change):
+        - `apps/worker/**`
+        - `packages/**`
+        - `pnpm-lock.yaml`
+        - `pnpm-workspace.yaml`
+
+- [ ] **Settings → Build**:
+      - Builder: Dockerfile
+      - Dockerfile path: `apps/worker/Dockerfile`.
+
+- [ ] **Settings → Networking**: the worker has a `/health`
+      endpoint but no public surface beyond that. **Don't generate
+      a public domain.** Railway's internal healthcheck (configured
+      by `apps/worker/railway.json`) reaches it on the private
+      network.
+
+#### Set environment variables
+
+In **Settings → Variables**, add the following one by one. Mark
+secrets with the lock icon as you add them. The canonical list is
+in `apps/worker/.env.example`; this table is the operator-facing
+summary.
+
+| variable                       | value                                                                                                                                                                  | secret? |
+| ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| `SUPABASE_URL`                 | `https://mnquozxfniasbpaavcos.supabase.co` (same as scraper / oracle / api)                                                                                            | no      |
+| `SUPABASE_SECRET_KEY`          | service-role key from §1 (same value used by the other three services; the worker uses it for trusted reads + writes)                                                  | **YES** |
+| `WORKER_CYCLE_INTERVAL_MS`     | `60000` (per-minute compute cadence; matches the worker's default)                                                                                                     | no      |
+| `WORKER_FRESHNESS_CEILING_MS`  | `1800000` (30 min — observations older than this are treated as stale; worker emits a thin-data row rather than publishing them)                                       | no      |
+| `HEALTH_PORT`                  | `8080`                                                                                                                                                                  | no      |
+| `NODE_ENV`                     | `production`                                                                                                                                                            | no      |
+| `HOST_OVERRIDE`                | optional; identifies the running container if you ever extend run logging. Falls back to `os.hostname()` when unset.                                                   | no      |
+| `SCRAPER_CYCLE_INTERVAL_MS`    | optional; **set to the same value as the scraper service's `SCRAPER_CYCLE_INTERVAL_MS`** so the worker can run a startup sanity check ("worker window narrower than scrape cadence → expect thin-data rows between scrapes") and warn if you've misconfigured. Leave unset to skip the check. | no      |
+
+⚠ **Important: there is NO `ORACLE_RPC_URL`, NO
+`PEPTIDE_ORACLE_AUTHORITY_PUBKEY`, NO Solana keypair** for the
+worker. If you find yourself adding any Solana-shaped env var to
+this service, you've crossed a wire — the worker is database-only.
+The on-chain side is the oracle's job (§5.3).
+
+#### What you should expect on first boot
+
+Healthy startup logs (the worker is concise — no advisory lock,
+no balance check, no cluster detection):
+
+```
+[startup] health endpoint on :8080/health
+[startup] worker looping on 60000ms interval (--once for a single cycle)
+```
+
+If `SCRAPER_CYCLE_INTERVAL_MS` is set and the worker's window is
+narrower, an additional warning fires once at startup:
+
+```
+[startup] WARN: worker window may be narrower than scrape cadence; expect thin-data rows between scrapes (WORKER_CYCLE_INTERVAL_MS=60000, SCRAPER_CYCLE_INTERVAL_MS=600000, WORKER_FRESHNESS_CEILING_MS=1800000)
+```
+
+After the first cycle (within 60 seconds of startup), per-cycle
+log lines appear:
+
+```
+[twap] run=… status=success peptides=26 with_twap=24 thin_data=2 inserted=26 dur=234ms
+```
+
+`with_twap` is the count of peptides where 2+ suppliers reported
+fresh observations and a real TWAP was computed; `thin_data` is
+peptides where the worker honestly wrote a NULL row (§3.3.2 thin-
+data rule). `inserted` is total rows added to `peptide_twaps`
+this cycle.
+
+**Build time:** ~2–4 min cold; ~30–60s incremental.
+
+#### Verification
+
+- [ ] **Service deploys** and Railway's healthcheck reports
+      Active / green.
+
+- [ ] **Within 60s of startup**, the worker writes its first
+      batch of `peptide_twaps` rows. Verify in Supabase Dashboard
+      → Table Editor → `peptide_twaps`:
+
+      ```sql
+      SELECT count(*), min(computed_at), max(computed_at)
+      FROM public.peptide_twaps
+      WHERE computed_at > now() - interval '5 minutes';
+      ```
+
+      Should show one row per active peptide per minute.
+
+- [ ] **Subsequent runs every 60s** add new rows without errors.
+      The worker logs at INFO level on every cycle; a wave of
+      ERROR-level "[twap] FAILED" lines means the worker is hitting
+      a real problem (auth, schema mismatch, etc.) — investigate.
+
+- [ ] **At the next HH:00:30 UTC tick after the worker's first
+      run**, the oracle's twap-poller picks up the latest
+      `peptide_twaps` rows for each active peptide. Watch the
+      oracle's logs:
+
+      ```
+      [twap-poller] hourBoundary=2026-05-03T16:00:00.000Z enqueue: inserted=26 skipped_no_twap=0 skipped_already_committed=0 errored=0
+      ```
+
+      `inserted=26` (or however many active peptides there are)
+      with `skipped_no_twap=0` is the green-path signal.
+
+- [ ] **Within ~5 minutes** of the hour boundary, all 26 TWAP
+      commits should reach `status='finalized'` on Solana. Verify
+      via the api:
+
+      ```bash
+      curl https://api.<domain>/v1/peptides | jq '.peptides[].current_twap'
+      ```
+
+      Every peptide should have a non-null `current_twap` with a
+      `solana_signature` set.
+
+#### Common failure modes
+
+- **Wave of thin-data rows in the first 30 minutes after deploy.**
+  If you deploy the worker before the scraper has had time to
+  populate observations, OR your `WORKER_FRESHNESS_CEILING_MS` is
+  shorter than the scrape cadence, every cycle writes
+  `twap_usd_per_mg=NULL` rows. This is **not a worker bug** — it's
+  the worker honestly signalling "no fresh data". Fix at the
+  scraper layer (faster cadence, or check for vendor blocking).
+  The worker keeps running and starts emitting real TWAPs as soon
+  as observations land.
+
+- **`peptide_twaps` row count grows fast.** ~26 rows/minute at v1
+  scale ≈ 37k rows/day, ~13M rows/year. The table has a
+  `(peptide_id, computed_at desc)` index so reads stay fast, but
+  if storage cost matters, plan a retention policy: archive or
+  delete rows older than ~30 days (none of the on-chain commits
+  reference rows older than ~1 hour anyway, so older rows are
+  audit-only). Not a v1 blocker — flag for §8 ops review.
+
+- **Worker missed the hour boundary.** If the worker was down at
+  HH:00:00 → HH:00:30 UTC, no `peptide_twaps` row exists at that
+  exact minute boundary. The oracle's twap-poller looks for the
+  most recent row at-or-before the hour boundary, so a row at
+  HH-1:59:00 still gets picked up. The on-chain memo's
+  `computed_at` will reflect that earlier time honestly. Not a
+  silent failure — verifiers see what was anchored.
+
+- **Schema drift on `peptide_twaps`.** If a migration changed the
+  column shape and the worker's deployed version was built
+  against the old shape, every `INSERT` will fail. Symptom: every
+  cycle's log line shows `inserted=0` with a Postgres error in the
+  detail. Fix: redeploy the worker against the latest branch.
+
+- **Service-role key from the wrong project.** Same failure mode
+  as the other three services: writes fail with PostgREST RLS
+  errors despite the env var being set. Re-fetch the
+  `service_role` key from Supabase Dashboard → Project Settings
+  → API for `mnquozxfniasbpaavcos`.
+
+- **`SUPABASE_URL` typo to the legacy biohack.market project**
+  (`pjsjaspntdjecfitogtc`). Symptom: the worker writes
+  `peptide_twaps` rows to the legacy project — they don't show up
+  in the new project's dashboard, the oracle's twap-poller stays
+  silent, and you'll discover it only when the api's
+  `/v1/peptides` reports stale or null `current_twap` values.
+  Pin `mnquozxfniasbpaavcos` and double-check before saving.
 
 ---
 
