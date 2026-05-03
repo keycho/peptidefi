@@ -2,7 +2,7 @@
   "name": "peptide-oracle",
   "version": "0.0.0",
   "private": true,
-  "description": "PeptideFi Season 1 — free-to-play points-based trading on synthetic peptide assets.",
+  "description": "BioHash — on-chain commit layer for peptide market observations and TWAPs (biohash.network).",
   "engines": {
     "node": ">=20.0.0",
     "pnpm": ">=9.0.0"

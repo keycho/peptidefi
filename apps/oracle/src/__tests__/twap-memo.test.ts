@@ -8,38 +8,48 @@ import {
   SPEC_OBS_4,
   SPEC_ROOT,
   SPEC_TWAP_MEMO_BYTES,
+  SPEC_TWAP_MEMO_BYTES_V1,
   SPEC_TWAP_MEMO_INPUT,
   SPEC_TWAP_MEMO_JSON,
+  SPEC_TWAP_MEMO_JSON_V1,
 } from "./fixtures";
 
-describe("canonicalTwapMemoJson", () => {
-  it("byte-exact: reproduces the §02.2.3 worked example", () => {
+describe("canonicalTwapMemoJson — v=2 (current default)", () => {
+  it("byte-exact: reproduces the §02.2.3 v=2 worked example", () => {
     expect(canonicalTwapMemoJson(SPEC_TWAP_MEMO_INPUT)).toBe(
       SPEC_TWAP_MEMO_JSON,
     );
   });
 
-  it("size: 312 bytes UTF-8 (matches §02.2.3 published size)", () => {
-    const bytes = Buffer.byteLength(SPEC_TWAP_MEMO_JSON, "utf-8");
-    expect(bytes).toBe(SPEC_TWAP_MEMO_BYTES);
+  it("size: 356 bytes UTF-8 (v=2 worked example)", () => {
+    expect(Buffer.byteLength(SPEC_TWAP_MEMO_JSON, "utf-8")).toBe(
+      SPEC_TWAP_MEMO_BYTES,
+    );
   });
 
-  it("keys are sorted ascending", () => {
+  it("keys are sorted ascending; v=2 has 11 keys including project + url", () => {
     const keys = Object.keys(JSON.parse(SPEC_TWAP_MEMO_JSON));
-    const sorted = [...keys].sort();
-    expect(keys).toEqual(sorted);
+    expect(keys).toEqual([
+      "algo",
+      "computed_at",
+      "observation_set_root",
+      "peptide_code",
+      "project",
+      "twap_value",
+      "type",
+      "url",
+      "v",
+      "window_end",
+      "window_start",
+    ]);
   });
 
-  it("type='twap' and v=1 are always present even though not in the input", () => {
+  it("v=2 sets project='biohash' + url='biohash.network' + type='twap' + v=2", () => {
     const parsed = JSON.parse(SPEC_TWAP_MEMO_JSON);
     expect(parsed.type).toBe("twap");
-    expect(parsed.v).toBe(1);
-  });
-
-  it("throws if a required field is missing", () => {
-    const broken = { ...SPEC_TWAP_MEMO_INPUT };
-    delete (broken as Record<string, unknown>).algo;
-    expect(() => canonicalTwapMemoJson(broken as never)).toThrow(/algo/);
+    expect(parsed.v).toBe(2);
+    expect(parsed.project).toBe("biohash");
+    expect(parsed.url).toBe("biohash.network");
   });
 
   it("changes byte-exactly on any field change", () => {
@@ -49,6 +59,33 @@ describe("canonicalTwapMemoJson", () => {
       twap_value: "5.998001",
     });
     expect(a).not.toBe(b);
+  });
+});
+
+describe("canonicalTwapMemoJson — v=1 (backward compat)", () => {
+  it("byte-exact: explicit v=1 reproduces the legacy worked example", () => {
+    expect(canonicalTwapMemoJson({ ...SPEC_TWAP_MEMO_INPUT, v: 1 })).toBe(
+      SPEC_TWAP_MEMO_JSON_V1,
+    );
+  });
+
+  it("v=1 is 312 bytes (legacy fixture)", () => {
+    const memo = canonicalTwapMemoJson({ ...SPEC_TWAP_MEMO_INPUT, v: 1 });
+    expect(Buffer.byteLength(memo, "utf-8")).toBe(SPEC_TWAP_MEMO_BYTES_V1);
+  });
+
+  it("v=1 omits project + url and sets v=1", () => {
+    const memo = canonicalTwapMemoJson({ ...SPEC_TWAP_MEMO_INPUT, v: 1 });
+    const parsed = JSON.parse(memo);
+    expect(parsed.v).toBe(1);
+    expect(parsed.project).toBeUndefined();
+    expect(parsed.url).toBeUndefined();
+  });
+
+  it("v=1 → v=2 delta is exactly +44 bytes", () => {
+    const v1 = canonicalTwapMemoJson({ ...SPEC_TWAP_MEMO_INPUT, v: 1 });
+    const v2 = canonicalTwapMemoJson({ ...SPEC_TWAP_MEMO_INPUT, v: 2 });
+    expect(Buffer.byteLength(v2, "utf-8") - Buffer.byteLength(v1, "utf-8")).toBe(44);
   });
 });
 

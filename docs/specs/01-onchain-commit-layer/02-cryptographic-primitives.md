@@ -54,29 +54,56 @@ re-canonicalizing.
 `scraper_runs` row that completed successfully and produced ≥1
 observation.
 
-**Schema:**
+**Schema (v=2 — current; BioHash rebrand):**
 
 | field               | type            | meaning                                                                  |
 | ------------------- | --------------- | ------------------------------------------------------------------------ |
-| `v`                 | integer         | Protocol version. Always `1` in this document.                           |
+| `v`                 | integer         | Protocol version. `2` for new commits; `1` for legacy commits (see "v=1 backward compatibility" below). |
 | `type`              | string          | Always the literal `"cycle"`.                                            |
+| `project`           | string          | Static project identifier: `"biohash"`. Lowercase ASCII, no spaces.       |
+| `url`               | string          | Static project discovery URL without protocol scheme: `"biohash.network"`. |
 | `cycle_id`          | integer         | The `scraper_runs.id` value. Bigint in DB; safe as JSON int (well under 2⁵³). |
 | `merkle_root`       | string          | `0x` + 64 lowercase hex chars. The 32-byte SHA-256 root from §4.        |
 | `observation_count` | integer         | Number of `supplier_observations` rows hashed into the tree.            |
-| `started_at`        | string          | `scraper_runs.started_at` in canonical timestamp form (§2.3).           |
-| `completed_at`      | string          | `scraper_runs.finished_at` in canonical timestamp form (§2.3).          |
+| `started_at`        | string          | `scraper_runs.started_at` in canonical timestamp form (§2.6).           |
+| `completed_at`      | string          | `scraper_runs.finished_at` in canonical timestamp form (§2.6).          |
 
-**Example** (canonical, byte-exact):
+`project` and `url` are static, included in the canonical-encoded
+hash payload (so they cannot be tampered with after commit), and
+provide a discovery surface for anyone viewing the memo on Solscan
+without any prior context. They sort alphabetically into their
+canonical positions: `project` between `observation_count` and
+`started_at`; `url` between `type` and `v`.
+
+**Example** (v=2, canonical, byte-exact):
+
+```
+{"completed_at":"2026-05-01T12:00:09.000Z","cycle_id":200,"merkle_root":"0x100eeb8fabe2d1cb200324e8ccbcc3ead12cfa18224a744cbe11d813dcb32af8","observation_count":118,"project":"biohash","started_at":"2026-05-01T12:00:00.000Z","type":"cycle","url":"biohash.network","v":2}
+```
+
+**Size:** 270 bytes UTF-8 (verified). Up from 226 in v=1 (the BioHash
+rebrand adds 44 bytes: `,"project":"biohash"` (20) +
+`,"url":"biohash.network"` (23) + the `"v":1` → `"v":2` digit (1
+byte) — 44 net). Solana Memo program v2 accepts up to 566 bytes per
+memo, and the whole transaction must fit in 1232 bytes (legacy) /
+1644 bytes (versioned). Comfortably within all limits. The Merkle
+root is the only field whose size grows with data; everything else
+is bounded.
+
+**v=1 backward compatibility.** Devnet cycles 1–63 were committed
+under the v=1 schema (no `project` / `url` fields, `"v":1`).
+Verifiers must accept both versions: read `v` from the parsed memo
+JSON to dispatch. Mainnet cuts over to v=2 from cycle 1; no v=1
+commits will ever exist on mainnet.
+
+**v=1 example** (legacy, retained for backward-compat
+documentation):
 
 ```
 {"completed_at":"2026-05-01T12:00:09.000Z","cycle_id":200,"merkle_root":"0x100eeb8fabe2d1cb200324e8ccbcc3ead12cfa18224a744cbe11d813dcb32af8","observation_count":118,"started_at":"2026-05-01T12:00:00.000Z","type":"cycle","v":1}
 ```
 
-**Size:** 226 bytes UTF-8 (verified). Solana Memo program v2 accepts
-up to 566 bytes per memo, and the whole transaction must fit in
-1232 bytes (legacy) / 1644 bytes (versioned). Comfortably within all
-limits. The Merkle root is the only field whose size grows with
-data; everything else is bounded.
+(226 bytes UTF-8.)
 
 ### 2.3 TWAP commit memo
 
@@ -85,12 +112,14 @@ per `peptide_twaps` row we choose to commit (the v1 set is decided
 in the open-questions section of the parent doc — likely the active
 peptide subset).
 
-**Schema:**
+**Schema (v=2 — current; BioHash rebrand):**
 
 | field                   | type    | meaning                                                                                  |
 | ----------------------- | ------- | ---------------------------------------------------------------------------------------- |
-| `v`                     | integer | Protocol version. Always `1`.                                                            |
+| `v`                     | integer | Protocol version. `2` for new commits; `1` for legacy commits (see "v=1 backward compatibility" below). |
 | `type`                  | string  | Always the literal `"twap"`.                                                             |
+| `project`               | string  | Static project identifier: `"biohash"`. Same value + semantics as the cycle memo's `project` field. |
+| `url`                   | string  | Static project URL without protocol scheme: `"biohash.network"`. Same as cycle memo's `url`. |
 | `algo`                  | string  | Algorithm identifier. v1 ships a single algorithm: `"filtered_median_v1"` — see below.   |
 | `peptide_code`          | string  | The `peptides.code` value (e.g. `"BPC157"`). Stable identifier, never renamed.           |
 | `twap_value`            | string  | The `peptide_twaps.twap_usd_per_mg` value rendered per §2.5. **String, not number.**     |
@@ -123,23 +152,47 @@ value if it doesn't recognise the identifier (per §05.3 step 7).
 The Merkle-root chain of evidence (§5.3 steps 2–6) doesn't depend
 on `algo` and verifies regardless.
 
-**Example** (canonical, byte-exact):
+**Example** (v=2, canonical, byte-exact):
+
+```
+{"algo":"filtered_median_v1","computed_at":"2026-05-01T12:00:00.000Z","observation_set_root":"0x100eeb8fabe2d1cb200324e8ccbcc3ead12cfa18224a744cbe11d813dcb32af8","peptide_code":"BPC157","project":"biohash","twap_value":"5.998000","type":"twap","url":"biohash.network","v":2,"window_end":"2026-05-01T12:00:00.000Z","window_start":"2026-05-01T11:00:00.000Z"}
+```
+
+**Size:** 356 bytes UTF-8 (verified). Up from 312 in v=1 — same +44
+bytes the cycle memo gained for `,"project":"biohash"` +
+`,"url":"biohash.network"` + the `"v":1`→`"v":2` digit. Memo program
+v2's 566-byte cap still has comfortable headroom; the transaction
+stays well under both 1232 (legacy) and 1644 (versioned) byte
+ceilings.
+
+**v=1 backward compatibility.** TWAP commits anchored under v=1
+(legacy, devnet only) omit `project` + `url` and set `"v":1`.
+Verifiers must accept both shapes (mainnet cuts over to v=2 from
+the first commit; no v=1 TWAP commits will exist on mainnet).
+
+**v=1 example** (legacy):
 
 ```
 {"algo":"filtered_median_v1","computed_at":"2026-05-01T12:00:00.000Z","observation_set_root":"0x100eeb8fabe2d1cb200324e8ccbcc3ead12cfa18224a744cbe11d813dcb32af8","peptide_code":"BPC157","twap_value":"5.998000","type":"twap","v":1,"window_end":"2026-05-01T12:00:00.000Z","window_start":"2026-05-01T11:00:00.000Z"}
 ```
 
-**Size:** 312 bytes UTF-8 (verified). Up from 284 in the pre-`algo`
-draft; ~28 extra bytes for the `"algo":"filtered_median_v1",`
-fragment. Same Memo / transaction budget headroom as cycle
-commits — Memo program v2 caps at 566 bytes per memo and the full
-transaction stays well under both 1232 (legacy) and 1644
-(versioned) byte ceilings.
+(312 bytes UTF-8.)
 
 ### 2.4 Versioning
 
 The `v` field is a single positive integer that names the protocol
-version of this document. **v=1 is the version specified here.**
+version of this document.
+
+- **v=1** — original schema. Cycle memo: 7 fields. TWAP memo: 9
+  fields. Devnet cycles 1–63 were committed under v=1.
+- **v=2** — current schema (BioHash rebrand). Adds two static
+  project-identity fields, `project` ("biohash") and `url`
+  ("biohash.network"), to both cycle and TWAP memos. Field counts
+  bump to 9 and 11 respectively. Mainnet commits will be v=2 from
+  cycle 1; devnet cycles 64+ are v=2.
+
+Verifiers MUST accept both v=1 and v=2 — read the `v` field from
+the parsed memo JSON to dispatch.
 
 **Rules:**
 
@@ -492,11 +545,32 @@ ROOT = SHA-256(0x01 || N12_bytes || N34_bytes)
 ```
 
 The cycle commit memo for this example would be (cycle_id=200,
-observation_count=4):
+observation_count=4) at the current v=2 schema:
+
+```
+{"completed_at":"2026-05-01T12:00:09.000Z","cycle_id":200,"merkle_root":"0x100eeb8fabe2d1cb200324e8ccbcc3ead12cfa18224a744cbe11d813dcb32af8","observation_count":4,"project":"biohash","started_at":"2026-05-01T12:00:00.000Z","type":"cycle","url":"biohash.network","v":2}
+```
+
+(268 bytes UTF-8. Two bytes shorter than the §2.2 reference
+because `observation_count":118` shrinks to `observation_count":4`,
+saving 2 chars.)
+
+For verifiers walking historical devnet cycles 1–63, the same
+cycle expressed under the legacy v=1 schema is:
 
 ```
 {"completed_at":"2026-05-01T12:00:09.000Z","cycle_id":200,"merkle_root":"0x100eeb8fabe2d1cb200324e8ccbcc3ead12cfa18224a744cbe11d813dcb32af8","observation_count":4,"started_at":"2026-05-01T12:00:00.000Z","type":"cycle","v":1}
 ```
+
+(224 bytes; 44 fewer than v=2.)
+
+**Critically**: the four leaves L1–L4, the inner nodes N12 + N34,
+and ROOT are **unchanged** between v=1 and v=2. The protocol bump
+adds two memo-level fields (`project`, `url`) but does not enter
+the per-observation leaf canonical form (§2.4.2). A v=1 commit and
+a v=2 commit over the same observation set produce the same root.
+Only the outer memo bytes — and therefore the on-chain Solana
+signature — differ.
 
 A verifier with observation 3 (in its current Postgres form) and
 the cycle commit can ask the API (§6) for the Merkle proof for

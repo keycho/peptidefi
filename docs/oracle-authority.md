@@ -1,9 +1,10 @@
-# Peptide oracle authority pubkey
+# BioHash oracle authority pubkey
 
 This file is the canonical record of the public key that signs every
-on-chain commit issued by the peptide oracle service. Any commit
-not signed by the pubkey below is **not** an authentic peptide
-oracle commit — disregard it regardless of memo contents.
+on-chain commit issued by the **BioHash** oracle service
+(`biohash.network`). Any commit not signed by the pubkey below is
+**not** an authentic BioHash commit — disregard it regardless of
+memo contents.
 
 ## Current authority
 
@@ -13,9 +14,10 @@ FmBggsBjzGsHrtMayYG8ix2JzoYhVczrwJaGGKPpNKK7
 
 | field             | value                                   |
 | ----------------- | --------------------------------------- |
+| Project           | BioHash (`biohash.network`)             |
 | Pubkey            | `FmBggsBjzGsHrtMayYG8ix2JzoYhVczrwJaGGKPpNKK7` |
 | Solana cluster    | `mainnet-beta`                          |
-| Protocol version  | 1                                       |
+| Protocol version  | 2 (memo schema; v=1 used for legacy devnet cycles 1–63) |
 | Effective from    | 2026-05-01 (initial publication)        |
 | Last reviewed     | 2026-05-01                              |
 
