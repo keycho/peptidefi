@@ -86,7 +86,7 @@ function buildApp(): express.Express {
   app.use(express.json({ limit: "16kb" }));
 
   app.get("/", (_req, res) => {
-    res.json({ service: "peptide-oracle-api", ok: true });
+    res.json({ service: "biohash-api", ok: true });
   });
 
   app.get("/health", (_req, res) => {

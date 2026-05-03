@@ -22,3 +22,4 @@ export * from "./health";
 export * from "./canonical";
 export * from "./merkle";
 export * from "./merkle-proof";
+export * from "./project-identity";

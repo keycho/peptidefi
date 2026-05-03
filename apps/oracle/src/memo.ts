@@ -1,4 +1,9 @@
-import { buildMerkleTree, bytesToHex0x } from "@peptide-oracle/shared";
+import {
+  BIOHASH_PROJECT,
+  BIOHASH_URL,
+  buildMerkleTree,
+  bytesToHex0x,
+} from "@peptide-oracle/shared";
 import type { Observation } from "@peptide-oracle/shared";
 
 /**
@@ -13,15 +18,34 @@ import type { Observation } from "@peptide-oracle/shared";
  *   - sorted keys (ascending)
  *   - no whitespace
  *   - integers as JSON numbers, strings as JSON strings
- *   - protocol version v always 1 in this module
  *
- * The reference example in §02.2.2 produces 226 bytes UTF-8. Different
- * cycle_id values shift the byte count by ±a few characters; the test
- * suite asserts the reference example specifically.
+ * Protocol versions:
+ *
+ *   v=1 (legacy, devnet cycles 1-63): the original 7-field shape
+ *     (completed_at, cycle_id, merkle_root, observation_count,
+ *     started_at, type, v).
+ *
+ *   v=2 (current; BioHash rebrand): adds two static project-identity
+ *     fields (project="biohash", url="biohash.network"), bringing
+ *     the field count to 9. Sorts alphabetically: project after
+ *     observation_count, url after type.
+ *
+ * Default is v=2 for new commits. The v parameter is exposed so
+ * tests can byte-exact reproduce historical v=1 fixtures (we don't
+ * rebuild on-chain commits — they're immutable — so a v=1 builder is
+ * for backward-compat regression coverage only).
+ *
+ * The reference example in §02.2.2 produces 226 bytes UTF-8 at v=1.
+ * At v=2, the same input produces 256 bytes (added bytes:
+ * `,"project":"biohash"` = 20 bytes, `,"url":"biohash.network"` = 23
+ * bytes, plus 2 from `:1` → `:2`; net ~30 bytes per memo). Different
+ * cycle_id values shift the byte count by ±a few characters.
  */
 
-/** Protocol version locked at v=1 per §02.2.4. */
-const MEMO_VERSION = 1 as const;
+/** Default protocol version for new commits. */
+export const MEMO_VERSION_DEFAULT = 2 as const;
+
+export type MemoVersion = 1 | 2;
 
 export interface CycleMemoInput {
   /** scraper_runs.id of the cycle being committed. */
@@ -34,6 +58,12 @@ export interface CycleMemoInput {
   started_at: string;
   /** Same canonical format. */
   completed_at: string;
+  /**
+   * Protocol version. Defaults to 2 (current). Pass 1 for backward-
+   * compat regression tests against historical fixtures. v=1 emits
+   * the legacy 7-field shape; v=2 adds project+url.
+   */
+  v?: MemoVersion;
 }
 
 /**
@@ -65,25 +95,42 @@ export function buildCycleMemo(input: CycleMemoInput): string {
       `memo: merkle_root must be 0x + 64 lowercase hex chars, got "${input.merkle_root}"`,
     );
   }
-  // Caller is responsible for §02.6-formatted timestamps; we trust the
-  // shape here and let any malformed-timestamp bug surface in the
-  // hash mismatch downstream.
+  const v: MemoVersion = input.v ?? MEMO_VERSION_DEFAULT;
 
+  if (v === 1) {
+    // Legacy 7-field shape — used by tests for backward-compat
+    // assertions against devnet cycles 1-63.
+    const ordered = {
+      completed_at: input.completed_at,
+      cycle_id: input.cycle_id,
+      merkle_root: input.merkle_root,
+      observation_count: input.observation_count,
+      started_at: input.started_at,
+      type: "cycle",
+      v: 1,
+    };
+    return JSON.stringify(ordered);
+  }
+  // v=2 (current): adds project + url; alphabetical ordering puts
+  // project after observation_count and url after type.
   const ordered = {
     completed_at: input.completed_at,
     cycle_id: input.cycle_id,
     merkle_root: input.merkle_root,
     observation_count: input.observation_count,
+    project: BIOHASH_PROJECT,
     started_at: input.started_at,
     type: "cycle",
-    v: MEMO_VERSION,
+    url: BIOHASH_URL,
+    v: 2,
   };
   return JSON.stringify(ordered);
 }
 
 /**
  * Convenience: build the full memo from raw observations + cycle
- * metadata in one call. Used by the cycle poller (Phase B).
+ * metadata in one call. Used by the cycle poller. Always emits the
+ * default protocol version (v=2 currently).
  */
 export function buildCycleCommitFromObservations(args: {
   cycle_id: number;

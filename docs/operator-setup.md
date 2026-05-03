@@ -1,10 +1,16 @@
-# Operator setup — peptide oracle v1 prerequisites
+# Operator setup — BioHash v1 prerequisites
 
 Working checklist for the eight operational prerequisites in §9.4 of
 the on-chain commit layer spec. Designed to be readable offline as
-you work through each step. **Implementation hasn't started yet** —
-these prerequisites are everything the operator does in
-operator-land before code starts shipping.
+you work through each step.
+
+**Project identity:** as of the v=2 protocol bump, the project is
+**BioHash** (URL: `biohash.network`). Internal package names
+(`@peptide-oracle/*`) and Railway service names
+(`peptide-oracle-*`) retain the legacy "peptide-oracle" identifier
+to avoid a disruptive rename — that's a follow-up refactor. Every
+human-facing surface (memos, /authority endpoint, this doc) uses
+the new name.
 
 This file is a working doc, not part of the locked spec. Update it
 inline as you progress; commit changes if anything is wrong or out

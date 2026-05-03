@@ -2,7 +2,7 @@
   "name": "@peptide-oracle/db",
   "version": "0.0.0",
   "private": true,
-  "description": "PeptideFi database — Supabase migrations and generated TypeScript types.",
+  "description": "BioHash database — Supabase migrations and generated TypeScript types.",
   "main": "types.ts",
   "types": "types.ts",
   "scripts": {

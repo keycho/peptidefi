@@ -1,3 +1,5 @@
+import { BIOHASH_PROJECT, BIOHASH_URL } from "@peptide-oracle/shared";
+
 /**
  * Canonical TWAP commit memo body per §02.2.3.
  *
@@ -11,11 +13,26 @@
  *   - Every field of the §02.2.3 schema always present; null-values
  *     are not allowed (the schema has no nullable fields).
  *
- * `algo` is locked at "filtered_median_v1" for v1 per §02.2.3 — the
- * worker's `apps/worker/src/twap.ts` ships exactly that one
- * algorithm.  A future "filtered_median_v2" (e.g. with MAD-based
+ * `algo` is locked at "filtered_median_v1" for v=1 of the algo per
+ * §02.2.3 — the worker's `apps/worker/src/twap.ts` ships exactly that
+ * one algorithm. A future "filtered_median_v2" (e.g. with MAD-based
  * outlier filtering) would be a separate string passed by the caller.
+ *
+ * Protocol versions:
+ *
+ *   v=1 (legacy): 9 fields — algo, computed_at, observation_set_root,
+ *     peptide_code, twap_value, type, v, window_end, window_start.
+ *
+ *   v=2 (current; BioHash rebrand): adds project="biohash" +
+ *     url="biohash.network", bringing the field count to 11.
+ *     Alphabetical ordering puts project after peptide_code and
+ *     url after type.
+ *
+ * Default is v=2. The v parameter on TwapMemoInput is exposed for
+ * backward-compat regression tests.
  */
+
+export type MemoVersion = 1 | 2;
 
 export interface TwapMemoInput {
   /** v1 algorithm identifier — locked at "filtered_median_v1" for now. */
@@ -32,52 +49,50 @@ export interface TwapMemoInput {
   window_end: string;
   /** "0x" + 64 lowercase hex; Merkle root over observations that fed the TWAP. */
   observation_set_root: string;
+  /**
+   * Memo protocol version. Defaults to 2 (current — adds project +
+   * url). Pass 1 only for backward-compat regression tests against
+   * historical fixtures.
+   */
+  v?: MemoVersion;
 }
-
-/** The 9 fields in canonical sorted order. Locked at v=1 per §02.2.4. */
-export const TWAP_MEMO_FIELDS = [
-  "algo",
-  "computed_at",
-  "observation_set_root",
-  "peptide_code",
-  "twap_value",
-  "type",
-  "v",
-  "window_end",
-  "window_start",
-] as const;
 
 /**
  * Build the canonical UTF-8 JSON form of a TWAP commit memo.
  *
- * Throws on missing fields and on undefined values (use null is not
- * allowed — every field of the §02.2.3 schema is required and
- * non-null).
+ * Throws on missing fields and on undefined values — every field of
+ * the §02.2.3 schema is required and non-null.
  */
 export function canonicalTwapMemoJson(input: TwapMemoInput): string {
-  // Build the full record with the locked literal fields, then
-  // emit in canonical sorted order.
-  const fields: Record<string, unknown> = {
+  const v: MemoVersion = input.v ?? 2;
+  if (v === 1) {
+    const ordered = {
+      algo: input.algo,
+      computed_at: input.computed_at,
+      observation_set_root: input.observation_set_root,
+      peptide_code: input.peptide_code,
+      twap_value: input.twap_value,
+      type: "twap",
+      v: 1,
+      window_end: input.window_end,
+      window_start: input.window_start,
+    };
+    return JSON.stringify(ordered);
+  }
+  // v=2 (current): adds project + url. Alphabetical ordering puts
+  // project after peptide_code and url after type.
+  const ordered = {
     algo: input.algo,
     computed_at: input.computed_at,
     observation_set_root: input.observation_set_root,
     peptide_code: input.peptide_code,
+    project: BIOHASH_PROJECT,
     twap_value: input.twap_value,
     type: "twap",
-    v: 1,
+    url: BIOHASH_URL,
+    v: 2,
     window_end: input.window_end,
     window_start: input.window_start,
   };
-
-  const ordered: Record<string, unknown> = {};
-  for (const field of TWAP_MEMO_FIELDS) {
-    const value = fields[field];
-    if (value === undefined) {
-      throw new Error(
-        `twap canonical: field "${field}" is undefined (required per §02.2.3)`,
-      );
-    }
-    ordered[field] = value;
-  }
   return JSON.stringify(ordered);
 }

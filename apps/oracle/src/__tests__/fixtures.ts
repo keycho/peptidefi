@@ -132,7 +132,19 @@ export const SPEC_ROOT =
 /**
  * Reference cycle commit memo from §02.2.2 — observation_count=118
  * (representative of a real cycle, NOT the 4 from the worked example
- * above). 226 bytes UTF-8 per spec.
+ * above).
+ *
+ * Bytes (UTF-8):
+ *   v=1 (legacy, devnet cycles 1-63):  226 bytes
+ *   v=2 (current, BioHash rebrand):    270 bytes (+44 for
+ *                                      `,"project":"biohash"` (20)
+ *                                      `,"url":"biohash.network"` (23)
+ *                                      `:1` → `:2` (0); the 1 byte
+ *                                      delta there nets out)
+ *
+ * SPEC_CYCLE_MEMO_JSON / _BYTES point at v=2 (the default emitted by
+ * production code). _V1 variants carry the legacy bytes for
+ * backward-compatibility regression tests.
  */
 export const SPEC_CYCLE_MEMO_INPUT = {
   cycle_id: 200,
@@ -143,9 +155,12 @@ export const SPEC_CYCLE_MEMO_INPUT = {
 } as const;
 
 export const SPEC_CYCLE_MEMO_JSON =
-  '{"completed_at":"2026-05-01T12:00:09.000Z","cycle_id":200,"merkle_root":"0x100eeb8fabe2d1cb200324e8ccbcc3ead12cfa18224a744cbe11d813dcb32af8","observation_count":118,"started_at":"2026-05-01T12:00:00.000Z","type":"cycle","v":1}';
+  '{"completed_at":"2026-05-01T12:00:09.000Z","cycle_id":200,"merkle_root":"0x100eeb8fabe2d1cb200324e8ccbcc3ead12cfa18224a744cbe11d813dcb32af8","observation_count":118,"project":"biohash","started_at":"2026-05-01T12:00:00.000Z","type":"cycle","url":"biohash.network","v":2}';
+export const SPEC_CYCLE_MEMO_BYTES = 270;
 
-export const SPEC_CYCLE_MEMO_BYTES = 226;
+export const SPEC_CYCLE_MEMO_JSON_V1 =
+  '{"completed_at":"2026-05-01T12:00:09.000Z","cycle_id":200,"merkle_root":"0x100eeb8fabe2d1cb200324e8ccbcc3ead12cfa18224a744cbe11d813dcb32af8","observation_count":118,"started_at":"2026-05-01T12:00:00.000Z","type":"cycle","v":1}';
+export const SPEC_CYCLE_MEMO_BYTES_V1 = 226;
 
 /**
  * Reference TWAP commit memo from §02.2.3. The example uses
@@ -154,7 +169,9 @@ export const SPEC_CYCLE_MEMO_BYTES = 226;
  * observations — the spec deliberately picks a known-named root
  * to keep the examples cross-referenceable).
  *
- * Size: 312 bytes UTF-8 per the §02.2.3 spec text.
+ * Bytes (UTF-8):
+ *   v=1 (legacy):  312 bytes
+ *   v=2 (current): 356 bytes (+44 same as cycle memo)
  */
 export const SPEC_TWAP_MEMO_INPUT = {
   algo: "filtered_median_v1",
@@ -167,6 +184,9 @@ export const SPEC_TWAP_MEMO_INPUT = {
 } as const;
 
 export const SPEC_TWAP_MEMO_JSON =
-  '{"algo":"filtered_median_v1","computed_at":"2026-05-01T12:00:00.000Z","observation_set_root":"0x100eeb8fabe2d1cb200324e8ccbcc3ead12cfa18224a744cbe11d813dcb32af8","peptide_code":"BPC157","twap_value":"5.998000","type":"twap","v":1,"window_end":"2026-05-01T12:00:00.000Z","window_start":"2026-05-01T11:00:00.000Z"}';
+  '{"algo":"filtered_median_v1","computed_at":"2026-05-01T12:00:00.000Z","observation_set_root":"0x100eeb8fabe2d1cb200324e8ccbcc3ead12cfa18224a744cbe11d813dcb32af8","peptide_code":"BPC157","project":"biohash","twap_value":"5.998000","type":"twap","url":"biohash.network","v":2,"window_end":"2026-05-01T12:00:00.000Z","window_start":"2026-05-01T11:00:00.000Z"}';
+export const SPEC_TWAP_MEMO_BYTES = 356;
 
-export const SPEC_TWAP_MEMO_BYTES = 312;
+export const SPEC_TWAP_MEMO_JSON_V1 =
+  '{"algo":"filtered_median_v1","computed_at":"2026-05-01T12:00:00.000Z","observation_set_root":"0x100eeb8fabe2d1cb200324e8ccbcc3ead12cfa18224a744cbe11d813dcb32af8","peptide_code":"BPC157","twap_value":"5.998000","type":"twap","v":1,"window_end":"2026-05-01T12:00:00.000Z","window_start":"2026-05-01T11:00:00.000Z"}';
+export const SPEC_TWAP_MEMO_BYTES_V1 = 312;

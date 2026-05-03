@@ -84,7 +84,7 @@ export async function statusHandler(_req: Request, res: Response): Promise<void>
   }
 
   res.json({
-    service: "peptide-oracle-api",
+    service: "biohash-api",
     cluster: config.cluster,
     oracle_authority_pubkey: config.authorityPubkey,
     on_chain: {
