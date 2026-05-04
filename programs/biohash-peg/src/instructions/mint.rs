@@ -1,5 +1,9 @@
 // mint_peptide_token — deposit USDC, receive peptide tokens at TWAP.
 // Spec §02 §5.1.
+//
+// `Account<...>` fields are wrapped in `Box<>` to keep the generated
+// `try_accounts` stack frame under the 4 KB sBPF limit (see burn.rs
+// for the same treatment + commentary).
 
 use anchor_lang::prelude::*;
 use anchor_spl::token::{self, Mint, MintTo, Token, TokenAccount, Transfer};
@@ -20,34 +24,34 @@ pub struct MintPeptideToken<'info> {
         seeds = [b"peg_state", peg_state.peptide_code.as_ref()],
         bump = peg_state.bump,
     )]
-    pub peg_state: Account<'info, PegState>,
+    pub peg_state: Box<Account<'info, PegState>>,
 
     #[account(
         mut,
         seeds = [b"reserve_state"],
         bump = reserve_state.reserve_state_bump,
     )]
-    pub reserve_state: Account<'info, ReserveState>,
+    pub reserve_state: Box<Account<'info, ReserveState>>,
 
     #[account(mut, address = peg_state.peptide_token_mint)]
-    pub peptide_token_mint: Account<'info, Mint>,
+    pub peptide_token_mint: Box<Account<'info, Mint>>,
 
     #[account(
         mut,
         token::mint = reserve_state.usdc_mint,
         token::authority = user,
     )]
-    pub user_usdc_account: Account<'info, TokenAccount>,
+    pub user_usdc_account: Box<Account<'info, TokenAccount>>,
 
     #[account(mut, address = reserve_state.usdc_vault)]
-    pub reserve_usdc_vault: Account<'info, TokenAccount>,
+    pub reserve_usdc_vault: Box<Account<'info, TokenAccount>>,
 
     #[account(
         mut,
         token::mint = peg_state.peptide_token_mint,
         token::authority = user,
     )]
-    pub user_token_account: Account<'info, TokenAccount>,
+    pub user_token_account: Box<Account<'info, TokenAccount>>,
 
     pub clock: Sysvar<'info, Clock>,
     pub token_program: Program<'info, Token>,
@@ -121,16 +125,16 @@ pub fn mint_handler(
         tokens_out,
     )?;
 
-    // 3. Telemetry.
+    // 3. Telemetry. Re-bind through DerefMut on the Box.
     let twap_used = peg_state.current_twap;
-    let peg_state = &mut ctx.accounts.peg_state;
+    let peg_state = &mut **ctx.accounts.peg_state;
     peg_state.total_minted = peg_state
         .total_minted
         .checked_add(tokens_out as u128)
         .ok_or(PegError::ArithmeticOverflow)?;
     peg_state.mint_count = peg_state.mint_count.saturating_add(1);
 
-    let reserve_state = &mut ctx.accounts.reserve_state;
+    let reserve_state = &mut **ctx.accounts.reserve_state;
     reserve_state.total_usdc_in = reserve_state
         .total_usdc_in
         .checked_add(usdc_amount_in as u128)

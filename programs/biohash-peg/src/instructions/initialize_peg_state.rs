@@ -10,6 +10,9 @@ use anchor_spl::token::Mint;
 use crate::errors::PegError;
 use crate::state::PegState;
 
+// Box account fields to keep the generated try_accounts frame under
+// the sBPF 4 KB stack limit (matches burn/mint pattern).
+
 #[derive(Accounts)]
 #[instruction(peptide_code: [u8; 16])]
 pub struct InitializePegState<'info> {
@@ -23,11 +26,11 @@ pub struct InitializePegState<'info> {
         seeds = [b"peg_state", peptide_code.as_ref()],
         bump,
     )]
-    pub peg_state: Account<'info, PegState>,
+    pub peg_state: Box<Account<'info, PegState>>,
 
     /// SPL Mint for the peptide token. Mint authority MUST equal the
     /// peg_state PDA (verified in handler).
-    pub peptide_token_mint: Account<'info, Mint>,
+    pub peptide_token_mint: Box<Account<'info, Mint>>,
 
     pub system_program: Program<'info, System>,
 }
@@ -55,7 +58,7 @@ pub fn initialize_peg_state_handler(
         PegError::MintAuthorityMismatch
     );
 
-    let peg_state = &mut ctx.accounts.peg_state;
+    let peg_state = &mut **ctx.accounts.peg_state;
     peg_state.peptide_code = peptide_code;
     peg_state.peptide_token_mint = peptide_token_mint;
     peg_state.update_authority = update_authority;
