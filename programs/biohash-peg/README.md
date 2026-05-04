@@ -49,7 +49,11 @@ programs/biohash-peg/
 
 ## Building locally
 
-Requires `anchor-cli` 0.30.x and `solana-cli` 1.18+.
+Requires `anchor-cli` 0.31.x and `solana-cli` 1.18+. (See spec §02 §8.1
+for the rationale on the 0.31 pin: the 0.30 line transitively pulls in
+`block-buffer 0.12` via `solana-program` which requires Rust 1.85+,
+incompatible with the Rust 1.79–1.82 that anchor-cli 0.30 itself
+expects. The 0.31 release lifts that constraint.)
 
 ```bash
 # From repo root:
@@ -75,13 +79,17 @@ should run before the design is reviewed.
 
 ## Status
 
-| Item                          | Status      |
-| ----------------------------- | ----------- |
-| Account layouts               | Defined     |
-| PDA seed derivations          | Defined     |
-| Instruction signatures        | Defined     |
-| Anchor `Accounts` constraints | Drafted     |
-| Instruction handler bodies    | **Empty**   |
-| TypeScript test scaffold      | Empty       |
-| Devnet deployment scripts     | Not written |
-| Audit                         | Not started |
+| Item                          | Status                          |
+| ----------------------------- | ------------------------------- |
+| Account layouts               | Implemented                     |
+| PDA seed derivations          | Implemented                     |
+| Instruction signatures        | Implemented                     |
+| Anchor `Accounts` constraints | Implemented                     |
+| Instruction handler bodies    | Implemented (V0.1)              |
+| Anchor framework version      | 0.31.1 (see §8.1 in the spec)   |
+| Integration tests             | Implemented (`tests/biohash-peg.ts`) |
+| `cargo check`                 | Clean                           |
+| `anchor build` / `anchor test`| Not run in this environment     |
+| Devnet deployment scripts     | Not written                     |
+| Devnet deployment             | Not performed                   |
+| Audit                         | Not started                     |
