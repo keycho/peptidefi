@@ -1,4 +1,7 @@
 // update_peg_state — oracle pushes a fresh TWAP. Spec §02 §5.3.
+//
+// peg_state is Boxed to match burn/mint and keep the try_accounts
+// frame consistent across the program.
 
 use anchor_lang::prelude::*;
 
@@ -19,7 +22,7 @@ pub struct UpdatePegState<'info> {
         bump = peg_state.bump,
         has_one = update_authority @ PegError::UnauthorizedUpdater,
     )]
-    pub peg_state: Account<'info, PegState>,
+    pub peg_state: Box<Account<'info, PegState>>,
 
     pub clock: Sysvar<'info, Clock>,
 }
@@ -31,7 +34,7 @@ pub fn update_handler(
 ) -> Result<()> {
     require!(new_twap > 0, PegError::ZeroAmount);
 
-    let peg_state = &mut ctx.accounts.peg_state;
+    let peg_state = &mut **ctx.accounts.peg_state;
     let previous_twap = peg_state.current_twap;
 
     // Maximum-step check (skipped on first push when current_twap == 0).

@@ -1,5 +1,10 @@
 // initialize_reserve_state — one-time creation of the singleton ReserveState
 // PDA + USDC vault. Spec §02 §5.4.
+//
+// Account fields are wrapped in Box to keep the generated try_accounts
+// stack frame under the sBPF 4 KB limit (matches the burn/mint pattern
+// for consistency, even though this single-call init is unlikely to
+// approach the limit on its own).
 
 use anchor_lang::prelude::*;
 use anchor_spl::token::{Mint, Token, TokenAccount};
@@ -18,14 +23,14 @@ pub struct InitializeReserveState<'info> {
         seeds = [b"reserve_state"],
         bump,
     )]
-    pub reserve_state: Account<'info, ReserveState>,
+    pub reserve_state: Box<Account<'info, ReserveState>>,
 
     /// PDA that owns the USDC vault token account.
     /// CHECK: derivation only; does not hold data.
     #[account(seeds = [b"reserve_vault"], bump)]
     pub reserve_vault_authority: UncheckedAccount<'info>,
 
-    pub usdc_mint: Account<'info, Mint>,
+    pub usdc_mint: Box<Account<'info, Mint>>,
 
     #[account(
         init,
@@ -33,7 +38,7 @@ pub struct InitializeReserveState<'info> {
         token::mint = usdc_mint,
         token::authority = reserve_vault_authority,
     )]
-    pub reserve_usdc_vault: Account<'info, TokenAccount>,
+    pub reserve_usdc_vault: Box<Account<'info, TokenAccount>>,
 
     pub system_program: Program<'info, System>,
     pub token_program: Program<'info, Token>,
@@ -44,7 +49,7 @@ pub fn initialize_reserve_state_handler(
     ctx: Context<InitializeReserveState>,
     usdc_mint: Pubkey,
 ) -> Result<()> {
-    let reserve_state = &mut ctx.accounts.reserve_state;
+    let reserve_state = &mut **ctx.accounts.reserve_state;
     reserve_state.usdc_mint = usdc_mint;
     reserve_state.usdc_vault = ctx.accounts.reserve_usdc_vault.key();
     reserve_state.vault_authority_bump = ctx.bumps.reserve_vault_authority;

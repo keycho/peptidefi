@@ -1,5 +1,11 @@
 // burn_peptide_token — burn peptide tokens, receive USDC at TWAP.
 // Spec §02 §5.2.
+//
+// All `Account<...>` and `InterfaceAccount<...>` fields in the
+// BurnPeptideToken context are wrapped in `Box<>` to keep the
+// generated `try_accounts` stack frame under the 4 KB sBPF limit.
+// Anchor 0.31 supports `Box<Account<'info, T>>` natively; field
+// access auto-derefs through Box → Account → T.
 
 use anchor_lang::prelude::*;
 use anchor_spl::token::{self, Burn, Mint, Token, TokenAccount, Transfer};
@@ -20,14 +26,14 @@ pub struct BurnPeptideToken<'info> {
         seeds = [b"peg_state", peg_state.peptide_code.as_ref()],
         bump = peg_state.bump,
     )]
-    pub peg_state: Account<'info, PegState>,
+    pub peg_state: Box<Account<'info, PegState>>,
 
     #[account(
         mut,
         seeds = [b"reserve_state"],
         bump = reserve_state.reserve_state_bump,
     )]
-    pub reserve_state: Account<'info, ReserveState>,
+    pub reserve_state: Box<Account<'info, ReserveState>>,
 
     /// Vault authority PDA — signs the USDC out-transfer to the user.
     /// CHECK: derivation only.
@@ -35,24 +41,24 @@ pub struct BurnPeptideToken<'info> {
     pub reserve_vault_authority: UncheckedAccount<'info>,
 
     #[account(mut, address = peg_state.peptide_token_mint)]
-    pub peptide_token_mint: Account<'info, Mint>,
+    pub peptide_token_mint: Box<Account<'info, Mint>>,
 
     #[account(
         mut,
         token::mint = peg_state.peptide_token_mint,
         token::authority = user,
     )]
-    pub user_token_account: Account<'info, TokenAccount>,
+    pub user_token_account: Box<Account<'info, TokenAccount>>,
 
     #[account(
         mut,
         token::mint = reserve_state.usdc_mint,
         token::authority = user,
     )]
-    pub user_usdc_account: Account<'info, TokenAccount>,
+    pub user_usdc_account: Box<Account<'info, TokenAccount>>,
 
     #[account(mut, address = reserve_state.usdc_vault)]
-    pub reserve_usdc_vault: Account<'info, TokenAccount>,
+    pub reserve_usdc_vault: Box<Account<'info, TokenAccount>>,
 
     pub clock: Sysvar<'info, Clock>,
     pub token_program: Program<'info, Token>,
@@ -128,17 +134,18 @@ pub fn burn_handler(
         usdc_out,
     )?;
 
-    // 3. Telemetry.
+    // 3. Telemetry. Re-bind through DerefMut on the Box so the field
+    // assignments target the inner Account<T> data.
     let twap_used = peg_state.current_twap;
     let peptide_code = peg_state.peptide_code;
-    let peg_state = &mut ctx.accounts.peg_state;
+    let peg_state = &mut **ctx.accounts.peg_state;
     peg_state.total_burned = peg_state
         .total_burned
         .checked_add(tokens_in as u128)
         .ok_or(PegError::ArithmeticOverflow)?;
     peg_state.burn_count = peg_state.burn_count.saturating_add(1);
 
-    let reserve_state = &mut ctx.accounts.reserve_state;
+    let reserve_state = &mut **ctx.accounts.reserve_state;
     reserve_state.total_usdc_out = reserve_state
         .total_usdc_out
         .checked_add(usdc_out as u128)
