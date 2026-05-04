@@ -1,10 +1,11 @@
 # 02 — Peg mechanism (Phase II)
 
-Status: **draft, design phase only**. No instruction bodies are
-implemented in `programs/biohash-peg/` at the time this file lands —
-the Anchor crate exists as a scaffold so `anchor build` succeeds, but
-every handler returns a placeholder. Implementation lands in a
-follow-up after this design is reviewed.
+Status: **V0.1 implemented**. All five instruction handlers in
+`programs/biohash-peg/src/instructions/` carry the logic specified
+below — `cargo check` is clean and the integration tests in
+`/tests/biohash-peg.ts` cover every `PegError` variant except
+`ArithmeticOverflow`. The Anchor framework is pinned to 0.31.1 (see
+§8.1). Devnet deployment is the next phase and has not happened yet.
 
 This spec covers BioHash's V0.1 peg smart contract: a single
 SPL token (BPC-157) minted and burned against a shared USDC reserve,
@@ -929,7 +930,11 @@ upgrade-authority key is the **most critical** secret in the system.
 ### 8.1 Prerequisites
 
 - `solana-cli` ≥ 1.18 installed locally.
-- `anchor-cli` 0.30.x installed locally.
+- `anchor-cli` 0.31.x installed locally. (We pin to 0.31 not 0.30
+  because anchor 0.30's transitive `solana-program` pulls in
+  `block-buffer 0.12` which requires Rust 1.85+, while anchor-cli
+  0.30 itself wants Rust 1.79–1.82. Anchor 0.31 lifts that
+  constraint and builds cleanly under any Rust ≥ 1.79.)
 - A Solana CLI keypair funded with ≥ 5 devnet SOL for the
   deployment + initialisation.
 - The BioHash oracle authority pubkey
