@@ -27,33 +27,35 @@ of date.
 | 3 | Oracle keypair generated + funded  | yes          | 30 min  | tx confirm| 1.0 SOL one-time (~$200 @ $200/SOL) |
 | 4 | BACHEM/SIGMA suppliers paused      | needs #1     | 2 min   | none      | free                |
 | 5 | Railway scraper + oracle + api + worker services | needs #1,2,3 | 90 min  | 4 deploys | $20–30/mo marginal  |
-| 6 | Better Stack monitoring + status   | needs #5     | 45 min  | SMS test  | free tier           |
-| 7 | Authority pubkey publication       | needs #3     | 30 min  | none      | free                |
-| 8 | Documentation site live            | yes          | varies  | depends   | free–$X/mo          |
+| 6 | Mainnet cutover                    | needs #5 + 7d devnet stable | 30 min hands-on | 3-5 day stability period | mainnet keypair + ~0.005 SOL/day |
+| 7 | Better Stack monitoring + status   | needs #5     | 45 min  | SMS test  | free tier           |
+| 8 | Authority pubkey publication       | needs #3 + #6 | 30 min  | none      | free                |
+| 9 | Documentation site live            | yes          | varies  | depends   | free–$X/mo          |
 
 Dependency graph:
 
 ```
    #1 Supabase ──────┐
    #2 Helius   ──────┤
-   #3 Keypair  ──────┼──▶  #5 Railway  ──▶  #6 Better Stack
+   #3 Keypair  ──────┼──▶  #5 Railway  ──▶  #6 Cutover  ──▶  #7 Better Stack
+                     │              │           │
+                     │              │           └──▶  #8 publication channels
                      │              │
-                     │              └──▶  #7 publication channels
-                     │              ▲
-                     └──▶  #4       │
+                     └──▶  #4       ▲
                        BACHEM/SIGMA │
                                     │
-                       #8 docs site ┘
+                       #9 docs site ┘
 ```
 
-**Recommended execution: 3 sessions over ~3 days.**
+**Recommended execution: 4 sessions over ~10 days.**
 
-- **Day 1 (parallel):** #1 Supabase, #2 Helius, #3 keypair, #8 docs site setup. Each can be done independently in any order; #1 + #2 + #3 are the gates for downstream work.
-- **Day 2:** #4 BACHEM/SIGMA paused, #5 Railway service config + first deploy, #7 authority pubkey publication.
-- **Day 3:** #6 Better Stack alerts and full hookup.
+- **Day 1 (parallel):** #1 Supabase, #2 Helius, #3 keypair (devnet), #9 docs site setup. Each can be done independently in any order; #1 + #2 + #3 are the gates for downstream work.
+- **Day 2:** #4 BACHEM/SIGMA paused, #5 Railway service config + first deploys (devnet shakedown).
+- **Day 3-9:** Devnet observation period — let the four services run for at least 7 days of zero-incident operation before #6.
+- **Day 10:** #6 mainnet cutover, #7 Better Stack alerts, #8 authority pubkey publication. The 3-5 day post-cutover stability window then runs before the public-launch announcement.
 
-Once all 8 are green, you're at §9.5 pre-mainnet checklist (devnet
-testing → final go/no-go gate).
+Once all 9 are green, you're at §9.5 pre-mainnet checklist (final
+go/no-go gate before the public launch announcement).
 
 ---
 
@@ -1323,7 +1325,573 @@ this cycle.
 
 ---
 
-## 6. Better Stack monitoring + status page
+## 6. Mainnet cutover
+
+A one-time operational procedure that moves the four BioHash
+services from Solana devnet to mainnet. Done correctly: ~30
+minutes hands-on plus a 3–5 day post-cutover stability window
+before the public-launch announcement.
+
+**Depends on #5** plus at least 7 days of zero-incident devnet
+operation. Don't cut over with open issues — every operational
+gap will get amplified on mainnet where signing fees are real and
+the published authority pubkey is the trust anchor for verifiers
+worldwide.
+
+**Time:** ~30 minutes hands-on + 3–5 day observation window.
+
+**Cost:** mainnet keypair + ~0.005 SOL/day at default priority
+fees (per §07.1.5; that's roughly ~$1/day at $200/SOL). Fund the
+production keypair to ≥0.5 SOL for ~3 months runway, 1.0 SOL for
+~6 months.
+
+### 6.1 Prerequisites checklist
+
+Verify each item before pressing any cutover button. The cutover
+itself takes ~5 minutes once these are all green; the slow part
+is making sure they are.
+
+#### Production keypair exists locally and is NOT in the repo
+
+- [ ] Production keypair file exists at a path under your control
+      (not in a git-tracked directory):
+
+      ```bash
+      ls ~/.config/solana/biohash-mainnet.json
+      ```
+
+- [ ] The keypair was generated air-gapped per the §3.0
+      "security-conscious procedure" (offline machine, no clipboard
+      transit, written to encrypted backup). If you cut corners on
+      this step, **stop and do it again** — the production
+      authority key is the trust anchor; a compromise here is
+      operationally fatal.
+
+- [ ] The base58-encoded secret form is captured in your password
+      manager (the value you'll paste into Railway as
+      `ORACLE_SOLANA_PRIVATE_KEY`):
+
+      ```bash
+      node -e 'const fs=require("fs"); const bs58=require("bs58").default; \
+        console.log(bs58.encode(Uint8Array.from(JSON.parse(fs.readFileSync(process.argv[1],"utf-8"))))); \
+      ' ~/.config/solana/biohash-mainnet.json
+      ```
+
+      The output is a base58 string. **DO NOT** paste this in
+      chat, in a screen-share, or anywhere it could be logged.
+      Treat it like a database password.
+
+- [ ] The pubkey derived from this keypair is captured separately:
+
+      ```bash
+      solana-keygen pubkey ~/.config/solana/biohash-mainnet.json
+      ```
+
+      This is the value you'll paste into Railway as
+      `PEPTIDE_ORACLE_AUTHORITY_PUBKEY` AND that you'll publish in
+      `docs/oracle-authority.md`. Same value in both places.
+
+- [ ] Confirm the production pubkey is **different** from the
+      devnet shakedown pubkey. The devnet keypair must NEVER sign
+      mainnet txs — devnet signatures are auditable on the devnet
+      cluster and could be confused for "real" oracle attestations.
+
+#### Production keypair is funded on mainnet
+
+- [ ] Mainnet balance ≥ 0.5 SOL (1.0 SOL recommended for ~6
+      months runway):
+
+      ```bash
+      solana balance <PRODUCTION_PUBKEY> --url mainnet-beta
+      ```
+
+      If short, fund from an exchange withdrawal. Allow ~30
+      minutes for the funding tx to finalize before proceeding.
+
+- [ ] Verify the same pubkey shows the funded balance via Solscan:
+
+      ```
+      https://solscan.io/account/<PRODUCTION_PUBKEY>
+      ```
+
+      Cross-checks that the keypair file and the pubkey you
+      published match the cluster you're funding.
+
+#### Helius mainnet API key works
+
+- [ ] Mainnet Helius URL responds:
+
+      ```bash
+      curl -X POST 'https://mainnet.helius-rpc.com/?api-key=<YOUR_KEY>' \
+        -H 'Content-Type: application/json' \
+        -d '{"jsonrpc":"2.0","id":1,"method":"getHealth"}'
+      ```
+
+      Expected response: `{"jsonrpc":"2.0","result":"ok","id":1}`.
+      Anything else (rate limit, auth error, timeout) → fix
+      Helius dashboard config before proceeding.
+
+- [ ] Confirm your Helius plan covers the projected mainnet traffic.
+      Per §03.6.3, ~6,000 requests/day at steady state — well
+      within the free tier's 100k/day cap. If your plan is paid,
+      verify the billing card on file is current; running out of
+      Helius credits mid-day silently degrades the oracle.
+
+#### Devnet stability gate
+
+- [ ] Devnet has been running ≥ 7 days with zero unresolved
+      incidents:
+      - `/v1/status` shows steady cycle commit + TWAP commit
+        counts, no growth in `failed` count.
+      - No ghost-lock recovery (§8.5.7) needed in the past 7 days.
+      - No `[fatal]` log lines in the oracle service in the past
+        7 days.
+      - `/v1/verify/observation/<id>` returns `verified: true`
+        for at least one observation per peptide.
+      - The §3.7.3 INSUFFICIENT_SOL alarm has never fired (i.e.,
+        the devnet keypair always had budget).
+
+      If any of these fail, **don't cut over** — operationalise
+      first, observe another 7 days, retry.
+
+- [ ] Snapshot the devnet stats for the post-cutover retrospective:
+
+      ```bash
+      curl https://api.<your-domain>/v1/status > devnet-snapshot-$(date -u +%F).json
+      ```
+
+      Useful when the post-launch retrospective asks "what was the
+      delta between devnet end-state and mainnet day 1".
+
+#### biohash.network DNS ready (optional but recommended)
+
+- [ ] If using a custom domain for the api, the DNS record is
+      already pointing at Railway's edge. CNAME propagation can
+      take 5–60 min — set this up the day before so it's live
+      when the api comes back up after the cutover restart.
+
+#### Database snapshot for rollback
+
+- [ ] Take a `pg_dump` of the four oracle tables before the
+      cutover deletes anything. This is your only rollback path:
+
+      ```bash
+      pg_dump "$ORACLE_DATABASE_URL" \
+        --table=public.commit_cycles \
+        --table=public.commit_observations \
+        --table=public.twap_commits \
+        --data-only \
+        --inserts \
+        > biohash-devnet-snapshot-$(date -u +%F).sql
+      ```
+
+      Keep the file off-machine (e.g., copy to your local backup
+      drive). If the cutover fails and we need to roll back to
+      devnet, this dump restores the deleted rows.
+
+      Note: `scraper_runs` + `supplier_observations` are NOT
+      dumped — they're observation history, valuable beyond the
+      cutover, and never deleted.
+
+### 6.2 Architectural decision: handling devnet history
+
+This is the load-bearing decision in the cutover. There's no
+`cluster` column anywhere in the schema — `commit_cycles` only
+stores `solana_signature` + `solana_slot`. The api derives the
+cluster from its own `ORACLE_RPC_URL` env var. **After cutover,
+the api would label every devnet row as cluster=mainnet** —
+verifiers would query mainnet RPC for devnet signatures and get
+"transaction not found" errors. That's a real correctness bug.
+
+Two options:
+
+#### Option A (recommended): clean DB reset
+
+Before flipping the oracle env vars, DELETE the devnet rows from
+`commit_cycles`, `commit_observations`, and `twap_commits`. The
+api starts fresh on mainnet day 1; devnet on-chain commits remain
+on Solana devnet for audit-only verification (anyone who really
+cares can query devnet RPC directly, and the snapshot dump from
+§6.1 lets the operator re-create a devnet-flavoured api instance
+if needed for audit later).
+
+**Pros:** simpler to execute (one DELETE statement, no schema
+change), cleaner mental model for public ("mainnet day 1 = the
+first BioHash commit"), fewer ways for the api to lie.
+
+**Cons:** loses live-API access to devnet history (Solana on-chain
+data is preserved forever).
+
+`cycle_id` continuity: PRESERVED. The next cycle commit's
+`cycle_id` is whatever the next `scraper_runs.id` value is — the
+sequence isn't reset, just the commit_cycles rows are deleted.
+So mainnet starts at cycle ~269+ (whatever the next scraper run
+produces), not cycle 1. Public copy can frame this honestly:
+"BioHash anchored its first mainnet commit at scraper run #N,
+following 7+ days of devnet shakedown".
+
+#### Option B: keep history + add a `cluster` column
+
+Add `cluster text not null default 'devnet'` to commit_cycles +
+twap_commits via a new migration, backfill existing rows to
+'devnet', update oracle to write the current cluster on insert,
+update api to use per-row cluster instead of config.
+
+**Pros:** preserves live-API access to the full history (devnet
++ mainnet); a verifier sees "this row is devnet, that row is
+mainnet" and can point their RPC accordingly.
+
+**Cons:** ~50 lines of code change + a schema migration + redeploy
+of api before cutover; introduces a new field that future
+migrations have to keep consistent.
+
+This is the right answer if BioHash treats the devnet history as
+public-facing audit data. For v1 launch, Option A is simpler and
+the on-chain devnet commits are forever queryable independently
+of the api.
+
+**This runbook documents Option A.** If you want Option B,
+implement the schema migration as its own ticket BEFORE running
+this cutover; the §6.3 cutover steps below assume Option A.
+
+### 6.3 Cutover steps
+
+Total elapsed time once you start: ~5 minutes if everything goes
+right; up to 30 if you have to fix a misconfig mid-flight.
+
+#### Step 0: Wait for the oracle to drain in-flight work
+
+- [ ] Confirm `/v1/status` shows zero `pending` and zero
+      `submitted` cycle / TWAP commits:
+
+      ```bash
+      curl https://api.<your-domain>/v1/status | \
+        jq '.cycle_commits.counts, .twap_commits.counts'
+      ```
+
+      Expected: `pending=0, submitted=0` for both. Any non-zero
+      means a commit is in-flight on devnet — wait for it to
+      finalize (or fail and exhaust its retry budget) before
+      proceeding. Cutting over with in-flight work risks the new
+      mainnet oracle attempting to reconcile a devnet signature
+      against mainnet RPC, getting "not found", and re-anchoring
+      the same data on mainnet (orphan signature on devnet, valid
+      one on mainnet — confusing audit trail).
+
+#### Step 1: Pause the worker
+
+- [ ] In Railway → `peptide-oracle-worker` → click the running
+      deployment → Stop. The worker stops writing
+      `peptide_twaps` rows; the table state is now frozen for the
+      duration of the cutover.
+
+      Worker pause is technically optional (worker writes are
+      cluster-independent — they're just observation aggregates)
+      but it makes the cutover state easier to reason about. Resume
+      in Step 7.
+
+#### Step 2: DELETE devnet history (Option A)
+
+- [ ] Via the Supabase Dashboard → SQL Editor (or Mgmt API), run:
+
+      ```sql
+      DELETE FROM public.commit_observations;
+      DELETE FROM public.twap_commits;
+      DELETE FROM public.commit_cycles;
+      ```
+
+      Order matters: `commit_observations` has a FK to
+      `commit_cycles` with `ON DELETE CASCADE` (per migration
+      0031), so the cascade would delete the junction rows
+      automatically — but doing it explicitly first makes the
+      operator's intent clear in the audit log.
+
+- [ ] Verify zero rows remain:
+
+      ```sql
+      SELECT
+        (SELECT count(*) FROM public.commit_cycles) AS cycles,
+        (SELECT count(*) FROM public.commit_observations) AS obs,
+        (SELECT count(*) FROM public.twap_commits) AS twaps;
+      ```
+
+      Expected: `cycles=0, obs=0, twaps=0`.
+
+      `scraper_runs`, `supplier_observations`, and `peptide_twaps`
+      are UNTOUCHED — observation history is preserved across the
+      cutover.
+
+#### Step 3: Update oracle service env vars
+
+In Railway → `peptide-oracle-oracle` → Variables, change THREE
+values. Updating any variable triggers an automatic redeploy:
+
+| variable                          | old value                                                | new value                                                  |
+| --------------------------------- | -------------------------------------------------------- | ---------------------------------------------------------- |
+| `ORACLE_SOLANA_PRIVATE_KEY`       | base58 of devnet keypair                                 | base58 of **production keypair** from §6.1                 |
+| `ORACLE_RPC_URL`                  | `https://devnet.helius-rpc.com/?api-key=<KEY>`           | `https://mainnet.helius-rpc.com/?api-key=<KEY>`            |
+| `PEPTIDE_ORACLE_AUTHORITY_PUBKEY` | devnet pubkey                                            | production pubkey (matches the key from `ORACLE_SOLANA_PRIVATE_KEY`) |
+
+⚠ **The keypair env var is `ORACLE_SOLANA_PRIVATE_KEY` (a base58
+string), not a file path.** Don't go looking for `ORACLE_KEYPAIR_PATH`
+or anything similar; the keypair is stored as a Railway secret env
+var, not a file. The value is the base58-encoded 64-byte secret —
+solana-keygen's keypair file is a JSON array of bytes; convert via
+the bs58 helper from §6.1.
+
+- [ ] Save all three env vars. Mark all three with the lock icon
+      (secret).
+
+#### Step 4: Watch oracle restart
+
+The Railway redeploy takes ~30–60s. Watch the oracle service's
+logs for the green-path startup transcript:
+
+```
+[startup] oracle service starting (node=v20.x.x env=production)
+[startup] oracle wallet: <PRODUCTION_PUBKEY>          # ← mainnet pubkey
+[startup] rpc=helius supabase=mnquozxfniasbpaavcos.supabase.co
+[startup] balance thresholds: warn<0.3 SOL critical<0.15 SOL min-startup<0.05 SOL
+[startup] health endpoint on :8080/health
+[startup] wallet balance: 0.500000 SOL (>= 0.05 SOL min)   # ← mainnet balance
+[startup] advisory lock acquired (single-instance enforced)
+[cycle-poller] started (interval=30000ms, phase C: full lifecycle pending → submitted → finalized)
+[twap-poller] started (tick=60000ms, enqueue at HH:00:30 UTC)
+[long-tail] started (interval=3600000ms, maxTotalRetries=20)
+```
+
+If you see `[fatal] Authority pubkey mismatch` — your
+`PEPTIDE_ORACLE_AUTHORITY_PUBKEY` doesn't match the pubkey
+derived from `ORACLE_SOLANA_PRIVATE_KEY`. Re-derive both from the
+same keypair file and try again.
+
+If you see `[fatal] balance ... < min-startup` — the production
+keypair isn't funded enough on mainnet. Top up and redeploy.
+
+If you see ghost-lock retry messages — ignore for up to 60s, the
+retry-with-backoff (§8.5.7) usually clears the previous instance's
+session within that window. If it exhausts the 60s budget, follow
+the §8.5.7 manual recovery procedure.
+
+#### Step 5: Update API service env vars
+
+Same change shape, two values (api doesn't sign so no keypair
+change):
+
+| variable                          | new value                                            |
+| --------------------------------- | ---------------------------------------------------- |
+| `ORACLE_RPC_URL`                  | `https://mainnet.helius-rpc.com/?api-key=<KEY>`      |
+| `PEPTIDE_ORACLE_AUTHORITY_PUBKEY` | same production pubkey as the oracle service        |
+
+⚠ The api's `PEPTIDE_ORACLE_AUTHORITY_PUBKEY` MUST match the
+oracle's. Identical strings, byte-for-byte. A typo here makes
+every `/v1/verify/observation/:id` return
+`signer_matches_authority: false` even when the on-chain commit
+is genuine.
+
+- [ ] Save both. Mark both as secret.
+
+#### Step 6: Watch API restart + verify /authority
+
+Railway redeploys the api (~30s). Then:
+
+```bash
+curl https://api.<your-domain>/authority | jq
+```
+
+Expected:
+
+```json
+{
+  "service": "biohash",
+  "project_name": "BioHash",
+  "protocol_version": 2,
+  "cluster": "mainnet-beta",            ← was "devnet"
+  "oracle_authority_pubkey": "<PROD>",  ← the production pubkey
+  ...
+}
+```
+
+- [ ] `cluster` is `mainnet-beta`.
+- [ ] `oracle_authority_pubkey` matches what the oracle service is
+      using (cross-check by querying the oracle's `/health` or by
+      inspecting the env var directly).
+
+#### Step 7: Resume the worker
+
+- [ ] In Railway → `peptide-oracle-worker` → Restart. The worker
+      resumes its per-minute cycle, writing `peptide_twaps` rows.
+      The next time the oracle's twap-poller fires (HH:00:30 UTC),
+      it harvests those rows and submits them to mainnet.
+
+#### Step 8: Wait for the first mainnet commits
+
+- [ ] Within ~10 minutes (one scrape cycle + one oracle tick),
+      the first mainnet cycle commit lands. Watch the oracle's
+      logs:
+
+      ```
+      [cycle-poller] cycle_id=<N> obs=<K> root=0x… memo_bytes=270
+      [cycle-poller] cycle_id=<N> SUBMITTED sig=<MAINNET_SIG>
+      [cycle-poller] cycle_id=<N> FINALIZED slot=<MAINNET_SLOT>
+      ```
+
+      `<N>` is whatever the next scraper_runs.id is — likely
+      ~269+. `memo_bytes=270` confirms v=2 schema.
+
+- [ ] Click the Solscan URL from `/v1/cycles?limit=1` — it should
+      open against `mainnet-beta` (no `?cluster=devnet` query
+      string). The on-chain Memo bytes match `memo_payload`
+      byte-exact and include `"project":"biohash"` +
+      `"url":"biohash.network"`.
+
+- [ ] Within ~1 hour (next HH:00:30 UTC tick), the first mainnet
+      TWAP commits land. `/v1/peptides` shows `current_twap` with
+      mainnet `solana_signature` for each peptide.
+
+- [ ] Run the end-to-end verifier on a NEW (post-cutover)
+      observation:
+
+      ```bash
+      curl https://api.<your-domain>/v1/verify/observation/<NEW_OBS_ID> | jq
+      ```
+
+      Expected: `{"verified": true, "checks": [8 × passed=true]}`
+      with `on_chain.cluster: "mainnet-beta"`.
+
+If all of those green-path: cutover is complete. Move to §6.5.
+
+### 6.4 Common failure modes
+
+- **`/v1/verify` returns `signer_matches_authority: false` for
+  every commit.** The api's `PEPTIDE_ORACLE_AUTHORITY_PUBKEY`
+  doesn't match the on-chain signers. Re-copy the value from the
+  oracle service's env (or the oracle's `/health` `wallet.public_key`
+  field) into the api, and redeploy the api.
+
+- **`/v1/verify` returns `memo_matches_onchain: false` with
+  `failure_detail: "tx ... not found at finalized commitment"`.**
+  Either the api's `ORACLE_RPC_URL` cluster doesn't match the
+  oracle's (one of them is still pointing at devnet), or the
+  signature is on devnet but the api is on mainnet (you forgot
+  Step 2's DELETE — there are still devnet rows in commit_cycles).
+  Verify both env vars + re-run the DELETE if needed.
+
+- **Oracle starts but never finalizes a commit.** Insufficient
+  mainnet SOL despite passing the startup gate. The 0.05-SOL
+  startup floor is intentional minimum; if you're below ~0.5 SOL
+  the wallet runs out within days. Top up and watch.
+
+- **Mainnet RPC timeouts on submission.** Mainnet has higher load
+  than devnet. The oracle's retry policy (§3.7) absorbs this, but
+  if every cycle takes the full 90s confirmation budget, you may
+  be hitting Helius free-tier rate limits. Upgrade Helius or add
+  `ORACLE_RPC_URL_FALLBACK` per §3.6.2.
+
+- **Helius mainnet rate limit hit.** Symptom: `[cycle-poller]`
+  warns `RPC_RATE_LIMITED` repeatedly. The retry policy bumps to
+  60s backoff per §3.7.2 but the per-day cap is what you're
+  hitting. Check the Helius dashboard's "Requests today" against
+  your plan limit; upgrade or accept slower commit cadence until
+  the next billing window.
+
+- **Pubkey-mismatch fatal at oracle startup.** `[fatal] Authority
+  pubkey mismatch: ORACLE_SOLANA_PRIVATE_KEY derives to <X> but
+  PEPTIDE_ORACLE_AUTHORITY_PUBKEY is set to <Y>`. Re-derive the
+  pubkey from the secret in §6.1 step 4 and paste it into both
+  oracle and api env vars.
+
+- **Ghost-lock at oracle restart, retry budget exhausted.** Same
+  failure mode as devnet (§8.5.7) — Supavisor keeping the previous
+  oracle's idle backend alive. Apply the manual `pg_terminate_backend`
+  recovery from §8.5.7 against the new mainnet-config oracle. Be
+  aware the holding session shows `application_name='Supavisor'`,
+  `state='idle'` regardless of cluster — the recovery query is
+  unchanged from devnet.
+
+### 6.5 Rollback procedure
+
+If the cutover fails in a way that needs hours of debugging
+rather than minutes (e.g., persistent mainnet RPC issues, a
+schema/code mismatch only visible at scale), roll back to devnet
+within 5 minutes and investigate offline.
+
+#### Roll back env vars
+
+- [ ] Revert `ORACLE_SOLANA_PRIVATE_KEY` on the oracle to the
+      devnet keypair's base58 secret.
+- [ ] Revert `ORACLE_RPC_URL` on both oracle and api to the
+      devnet Helius URL.
+- [ ] Revert `PEPTIDE_ORACLE_AUTHORITY_PUBKEY` on both oracle and
+      api to the devnet pubkey.
+
+Both services auto-redeploy on env-var change.
+
+#### Restore deleted rows from snapshot
+
+- [ ] Apply the `pg_dump` snapshot from §6.1's prerequisites
+      checklist:
+
+      ```bash
+      psql "$ORACLE_DATABASE_URL" < biohash-devnet-snapshot-<date>.sql
+      ```
+
+      The dump is `--data-only --inserts`, so this re-inserts the
+      deleted rows. The api comes back online with the full
+      devnet history visible.
+
+#### Verify rollback
+
+- [ ] `/authority` returns `cluster: "devnet"` again.
+- [ ] `/v1/cycles?limit=5` returns devnet signatures with
+      `cluster: "devnet"` Solscan URLs.
+- [ ] Oracle is logging the next cycle commit on devnet.
+
+If rollback succeeds you've got time to investigate without the
+mainnet stakes. The rollback shouldn't ever produce data loss in
+practice — observation history (`scraper_runs`, `supplier_observations`,
+`peptide_twaps`) is untouched throughout, and the on-chain
+signatures (devnet) were never deleted from Solana.
+
+### 6.6 Post-cutover stability period
+
+3–5 days of zero-incident operation before the public-launch
+announcement. The bar:
+
+- [ ] Cycle commits flow every ~10 minutes with no gaps. Verify
+      via `/v1/cycles?limit=20` — `created_at` deltas all under
+      ~15 min.
+- [ ] TWAP commits flow hourly. `/v1/peptides` shows `current_twap`
+      timestamps within the last 90 minutes for every peptide.
+- [ ] No `[fatal]` log lines in any of the four services.
+- [ ] No ghost-lock manual recoveries needed (the `acquireOracleLock`
+      retry should absorb everything).
+- [ ] SOL balance trending down at the expected rate — at v1
+      scale (~6 cycle commits/hour + ~26 TWAP commits/hour) the
+      median priority-fee burn is **~0.005 SOL/day** (per §07.1.5).
+      A burn rate substantially higher (>0.05 SOL/day) means
+      something's misconfigured.
+- [ ] `/v1/verify/observation/:id` returns `verified: true`
+      against a randomly-sampled observation from each of the
+      past three days.
+
+If any of those fail during the 3–5 day window, **do not
+announce.** Investigate, fix, restart the 3–5 day clock from
+zero.
+
+#### Public launch is gated on this window
+
+The pubkey publication channels (§8) — Twitter pin, GitHub
+authority commit, docs site — should all happen in lockstep at
+launch announcement, **not** at cutover. A premature publication
+means verifiers might pin a pubkey that the operator later has to
+rotate (e.g., if a quiet bug shows up during the stability
+window). Publish only when you've earned confidence that the
+mainnet keypair is the long-term authority.
+
+---
+
+## 7. Better Stack monitoring + status page
 
 Heartbeat monitoring on `/health` plus a public status page at
 `status.<your-domain>`.
@@ -1421,7 +1989,7 @@ service URL from §5.3.
 
 ---
 
-## 7. Authority pubkey publication channels
+## 8. Authority pubkey publication channels
 
 Per §05.2.4 trust model. Three channels must agree on the same
 pubkey before the §9.5.5 pre-mainnet gate.
@@ -1502,7 +2070,7 @@ pubkey before the §9.5.5 pre-mainnet gate.
 
 ### Channel C: Documentation site
 
-- [ ] Add an `/authority` page to the docs site (covered in #8
+- [ ] Add an `/authority` page to the docs site (covered in #9
       below).
 - [ ] Content: the same pubkey, link to the GitHub
       `oracle-authority.md` commit, link to the pinned tweet.
@@ -1533,7 +2101,7 @@ pubkey before the §9.5.5 pre-mainnet gate.
 
 ---
 
-## 8. Documentation site published with authority pubkey
+## 9. Documentation site published with authority pubkey
 
 The user-facing site for the oracle. Hosts the `/authority` page
 referenced in §7 plus broader project documentation.
@@ -1613,7 +2181,7 @@ cutover. Prioritize after launch.
 
 ---
 
-## After all 8 are complete
+## After all 9 are complete
 
 - [ ] Tick off each prerequisite in this checklist (these
       checkboxes become your "done" signal).
@@ -1630,9 +2198,12 @@ cutover. Prioritize after launch.
       etc. — before pushing to mainnet.
 
 The §9.5 checklist requires the apps/oracle implementation to
-exist, so #5 (Railway service) won't be fully testable until
-implementation tickets are done. Until then, prerequisites #1–#4
-and #6–#8 are all standalone-completable.
+exist (now done as of Phase D). Prerequisites #1–#4 are
+standalone-completable; #5 (Railway services) requires #1–#3 and
+the BACHEM/SIGMA pause from #4; #6 (mainnet cutover) requires #5
+plus a 7-day devnet stability window; #7 (Better Stack) and #8
+(authority publication) and #9 (docs site) all become meaningful
+after #6.
 
 ---
 
