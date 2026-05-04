@@ -1,16 +1,13 @@
-// BioHash peg program — V0.1 scaffold.
+// BioHash peg program — V0.1.
 //
 // See docs/specs/02-peg-mechanism.md for the full design spec. This
 // crate is the on-chain program that mints and burns BPC-157 SPL
 // tokens against a shared USDC reserve at the BioHash oracle's TWAP.
-//
-// V0.1 SCAFFOLD ONLY: instruction handlers return `Ok(())` and
-// perform no work. Implementation lands in a follow-up after the
-// design (spec §02) is reviewed.
 
 use anchor_lang::prelude::*;
 
 pub mod errors;
+pub mod events;
 pub mod instructions;
 pub mod state;
 

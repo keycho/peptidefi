@@ -15,11 +15,19 @@ biohash_peg = "Fg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS"
 url = "https://api.apr.dev"
 
 [provider]
-cluster = "Devnet"
+cluster = "Localnet"
 wallet = "~/.config/solana/id.json"
 
+# Tests run against `solana-test-validator` started by `anchor test`.
+# `anchor test` defaults to localnet — run `anchor test --provider.cluster devnet`
+# to point at the live devnet endpoint after the first deploy.
 [scripts]
-test = "yarn run ts-mocha -p ./tsconfig.json -t 1000000 tests/**/*.ts"
+test = "pnpm exec ts-mocha -p ./tsconfig.test.json -t 1000000 'tests/**/*.ts'"
+
+# Devnet RPC config, used by `anchor deploy --provider.cluster devnet` and
+# by `anchor test --provider.cluster devnet`. Inherits wallet from [provider].
+[test.validator]
+url = "https://api.devnet.solana.com"
 
 # NOTE: the program id above (Fg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS)
 # is the standard Anchor placeholder. Run `anchor keys sync` after the
