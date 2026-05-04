@@ -1,0 +1,22 @@
+[package]
+name = "biohash-peg"
+version = "0.1.0"
+description = "BioHash peg mechanism: mint/burn against shared USDC reserve at on-chain TWAP."
+edition = "2021"
+license = "Apache-2.0"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "biohash_peg"
+
+[features]
+no-entrypoint = []
+no-idl = []
+no-log-ix-name = []
+cpi = ["no-entrypoint"]
+default = []
+idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
+
+[dependencies]
+anchor-lang = "0.30.1"
+anchor-spl = { version = "0.30.1", features = ["token"] }

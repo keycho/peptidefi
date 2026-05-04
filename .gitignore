@@ -50,3 +50,9 @@ playwright/.cache/
 # next.js
 .next/
 next-env.d.ts
+
+# anchor / cargo (programs/biohash-peg/, see docs/specs/02-peg-mechanism.md)
+# Cargo.lock IS committed (binary/program crate convention).
+target/
+.anchor/
+**/*.rs.bk
