@@ -69,6 +69,8 @@ export interface TwapPollerOptions {
    * skew per §3.3.1). Configurable for testing.
    */
   hourSkewMinutes?: number;
+  /** Solana cluster stamped on every twap_commits row this poller writes. */
+  cluster: "devnet" | "mainnet-beta" | "testnet";
 }
 
 export async function runTwapPoller(opts: TwapPollerOptions): Promise<void> {
@@ -484,6 +486,7 @@ async function enqueueHourly(
         window_end: eligible.window_end,
         observation_set_root: observationSetRootHex,
         memo_payload: memo,
+        cluster: opts.cluster,
       });
       if (result.inserted) {
         inserted += 1;

@@ -1,11 +1,25 @@
 import type { Request, Response } from "express";
 import { adminClientUntyped } from "../../supabase";
 import {
-  loadOracleApiConfig,
   solscanUrl,
   solanaExplorerUrl,
+  type SolanaCluster,
 } from "../../oracle-config";
+import { clusterQuerySchema } from "../../validators";
 import { sendError } from "../../errors";
+
+function rowCluster(row: { cluster: string | null }): SolanaCluster {
+  switch (row.cluster) {
+    case "mainnet-beta":
+    case "devnet":
+    case "testnet":
+      return row.cluster;
+    case "mainnet":
+      return "mainnet-beta";
+    default:
+      return "devnet";
+  }
+}
 
 /**
  * GET /v1/peptides — discovery endpoint listing tracked peptides.
@@ -30,6 +44,7 @@ interface CurrentTwap {
   computed_at: string;
   solana_signature: string | null;
   solana_slot: number | null;
+  cluster: SolanaCluster | null;
   solscan_url: string | null;
 }
 
@@ -43,11 +58,16 @@ interface PeptideListItem {
 }
 
 export async function listPeptidesHandler(
-  _req: Request,
+  req: Request,
   res: Response,
 ): Promise<void> {
+  const parsedCluster = clusterQuerySchema.safeParse(req.query);
+  if (!parsedCluster.success) {
+    sendError(res, 400, "BAD_REQUEST", parsedCluster.error.message);
+    return;
+  }
+  const { cluster } = parsedCluster.data;
   const supabase = adminClientUntyped();
-  const config = loadOracleApiConfig();
 
   // 1. Active peptides (one query).
   const { data: peptides, error: pErr } = await supabase
@@ -64,13 +84,17 @@ export async function listPeptidesHandler(
   //    Postgres groups efficiently). We fetch all finalized rows then
   //    reduce in JS — Supabase's PostgREST has no DISTINCT ON helper
   //    surfaced in the JS client.
-  const { data: twaps, error: tErr } = await supabase
+  let twapQuery = supabase
     .from("twap_commits")
     .select(
-      "peptide_code, twap_value, computed_at, solana_signature, solana_slot",
+      "peptide_code, twap_value, computed_at, solana_signature, solana_slot, cluster",
     )
     .eq("status", "finalized")
     .order("computed_at", { ascending: false });
+  if (cluster !== undefined) {
+    twapQuery = twapQuery.eq("cluster", cluster);
+  }
+  const { data: twaps, error: tErr } = await twapQuery;
   if (tErr) {
     sendError(res, 500, "DB_ERROR", `twap_commits query failed: ${tErr.message}`);
     return;
@@ -94,6 +118,7 @@ export async function listPeptidesHandler(
 
   const items: PeptideListItem[] = (peptides ?? []).map((p) => {
     const latest = latestByCode.get(p.code);
+    const latestCluster = latest ? rowCluster(latest) : null;
     return {
       peptide_id: p.id,
       code: p.code,
@@ -106,9 +131,11 @@ export async function listPeptidesHandler(
             computed_at: latest.computed_at,
             solana_signature: latest.solana_signature,
             solana_slot: latest.solana_slot,
-            solscan_url: latest.solana_signature
-              ? solscanUrl(latest.solana_signature, config.cluster)
-              : null,
+            cluster: latestCluster,
+            solscan_url:
+              latest.solana_signature && latestCluster
+                ? solscanUrl(latest.solana_signature, latestCluster)
+                : null,
           }
         : null,
     };
@@ -123,8 +150,13 @@ export async function getPeptideHandler(req: Request, res: Response): Promise<vo
     sendError(res, 400, "BAD_REQUEST", "missing :id path parameter");
     return;
   }
+  const parsedCluster = clusterQuerySchema.safeParse(req.query);
+  if (!parsedCluster.success) {
+    sendError(res, 400, "BAD_REQUEST", parsedCluster.error.message);
+    return;
+  }
+  const { cluster } = parsedCluster.data;
   const supabase = adminClientUntyped();
-  const config = loadOracleApiConfig();
 
   // Resolve :id — accept either numeric id or the code string.
   const numericId = /^\d+$/.test(idParam) ? Number(idParam) : null;
@@ -145,14 +177,18 @@ export async function getPeptideHandler(req: Request, res: Response): Promise<vo
 
   // TWAP history — last 7 days.
   const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
-  const { data: history, error: hErr } = await supabase
+  let historyQuery = supabase
     .from("twap_commits")
     .select(
-      "id, peptide_code, twap_value, computed_at, window_start, window_end, observation_set_root, status, solana_signature, solana_slot, finalized_at",
+      "id, peptide_code, twap_value, computed_at, window_start, window_end, observation_set_root, status, solana_signature, solana_slot, finalized_at, cluster",
     )
     .eq("peptide_code", peptide.code)
     .gte("computed_at", sevenDaysAgo)
     .order("computed_at", { ascending: false });
+  if (cluster !== undefined) {
+    historyQuery = historyQuery.eq("cluster", cluster);
+  }
+  const { data: history, error: hErr } = await historyQuery;
   if (hErr) {
     sendError(res, 500, "DB_ERROR", `twap history failed: ${hErr.message}`);
     return;
@@ -166,25 +202,29 @@ export async function getPeptideHandler(req: Request, res: Response): Promise<vo
       full_name: peptide.full_name,
       is_active: peptide.is_active,
     },
-    twap_history: (history ?? []).map((t) => ({
-      twap_id: t.id,
-      twap_value: String(t.twap_value),
-      computed_at: t.computed_at,
-      window_start: t.window_start,
-      window_end: t.window_end,
-      observation_set_root: t.observation_set_root,
-      status: t.status,
-      solana: t.solana_signature
-        ? {
-            signature: t.solana_signature,
-            slot: t.solana_slot,
-            cluster: config.cluster,
-            solscan_url: solscanUrl(t.solana_signature, config.cluster),
-            explorer_url: solanaExplorerUrl(t.solana_signature, config.cluster),
-          }
-        : null,
-      finalized_at: t.finalized_at,
-    })),
+    twap_history: (history ?? []).map((t) => {
+      const rowC = rowCluster(t);
+      return {
+        twap_id: t.id,
+        twap_value: String(t.twap_value),
+        computed_at: t.computed_at,
+        window_start: t.window_start,
+        window_end: t.window_end,
+        observation_set_root: t.observation_set_root,
+        status: t.status,
+        cluster: rowC,
+        solana: t.solana_signature
+          ? {
+              signature: t.solana_signature,
+              slot: t.solana_slot,
+              cluster: rowC,
+              solscan_url: solscanUrl(t.solana_signature, rowC),
+              explorer_url: solanaExplorerUrl(t.solana_signature, rowC),
+            }
+          : null,
+        finalized_at: t.finalized_at,
+      };
+    }),
     history_window: { start: sevenDaysAgo, end: new Date().toISOString() },
   });
 }

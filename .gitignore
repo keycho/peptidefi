@@ -50,3 +50,8 @@ playwright/.cache/
 # next.js
 .next/
 next-env.d.ts
+
+# rust / cargo build artifacts (sandbox runs `cargo check` against the
+# peg program if it's checked out on this branch; never commit target/).
+target/
+**/*.rs.bk

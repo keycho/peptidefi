@@ -72,6 +72,8 @@ export interface CyclePollerOptions {
   minBalanceLamports: number;
   /** Confirmation polling timeout (90s default per §3.4.6). */
   confirmationTimeoutMs: number;
+  /** Solana cluster stamped on every commit_cycles row this poller writes. */
+  cluster: "devnet" | "mainnet-beta" | "testnet";
 }
 
 export async function runCyclePoller(opts: CyclePollerOptions): Promise<void> {
@@ -472,6 +474,7 @@ async function detectAndWriteOne(opts: CyclePollerOptions): Promise<void> {
     merkle_root: rootHex,
     memo_payload: memo,
     leaves,
+    cluster: opts.cluster,
   });
 
   const elapsed = Date.now() - startMs;
