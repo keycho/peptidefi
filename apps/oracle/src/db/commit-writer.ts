@@ -35,6 +35,14 @@ export interface RegisterCommitCycleArgs {
     leaf_hash: string;
     leaf_index: number;
   }>;
+  /**
+   * Solana cluster the row is being committed to. Stamped on the
+   * commit_cycles row so historical rows remain identifiable across
+   * the devnet → mainnet cutover. Migration 0033 added the column
+   * + this 8th param to register_commit_cycle (default 'devnet' for
+   * back-compat with any pre-migration deploy).
+   */
+  cluster: "devnet" | "mainnet-beta" | "testnet";
 }
 
 /**
@@ -101,7 +109,8 @@ export async function registerCommitCycle(
       ${args.observation_count}::integer,
       ${args.merkle_root}::text,
       ${args.memo_payload}::text,
-      ${sql.json(args.leaves)}
+      ${sql.json(args.leaves)},
+      ${args.cluster}::text
     )
   `;
 }

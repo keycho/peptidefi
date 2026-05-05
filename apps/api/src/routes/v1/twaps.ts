@@ -1,11 +1,24 @@
 import type { Request, Response } from "express";
 import { adminClientUntyped } from "../../supabase";
 import {
-  loadOracleApiConfig,
   solscanUrl,
   solanaExplorerUrl,
+  type SolanaCluster,
 } from "../../oracle-config";
 import { sendError } from "../../errors";
+
+function rowCluster(row: { cluster: string | null }): SolanaCluster {
+  switch (row.cluster) {
+    case "mainnet-beta":
+    case "devnet":
+    case "testnet":
+      return row.cluster;
+    case "mainnet":
+      return "mainnet-beta";
+    default:
+      return "devnet";
+  }
+}
 
 /**
  * GET /v1/twaps/:id — single TWAP commit detail.
@@ -25,12 +38,11 @@ export async function getTwapHandler(req: Request, res: Response): Promise<void>
     return;
   }
   const supabase = adminClientUntyped();
-  const config = loadOracleApiConfig();
 
   const { data: twap, error: tErr } = await supabase
     .from("twap_commits")
     .select(
-      "id, peptide_code, twap_value, computed_at, window_start, window_end, observation_set_root, memo_payload, status, solana_signature, solana_slot, submitted_at, finalized_at, retry_count, last_error",
+      "id, peptide_code, twap_value, computed_at, window_start, window_end, observation_set_root, memo_payload, status, solana_signature, solana_slot, submitted_at, finalized_at, retry_count, last_error, cluster",
     )
     .eq("id", id)
     .maybeSingle();
@@ -65,6 +77,7 @@ export async function getTwapHandler(req: Request, res: Response): Promise<void>
     }
   }
 
+  const cluster = rowCluster(twap);
   res.json({
     twap_id: twap.id,
     peptide_code: twap.peptide_code,
@@ -75,6 +88,7 @@ export async function getTwapHandler(req: Request, res: Response): Promise<void>
     window_end: twap.window_end,
     observation_set_root: twap.observation_set_root,
     status: twap.status,
+    cluster,
     solana: twap.solana_signature
       ? {
           signature: twap.solana_signature,
@@ -84,9 +98,9 @@ export async function getTwapHandler(req: Request, res: Response): Promise<void>
               : typeof twap.solana_slot === "string"
                 ? Number(twap.solana_slot)
                 : twap.solana_slot,
-          cluster: config.cluster,
-          solscan_url: solscanUrl(twap.solana_signature, config.cluster),
-          explorer_url: solanaExplorerUrl(twap.solana_signature, config.cluster),
+          cluster,
+          solscan_url: solscanUrl(twap.solana_signature, cluster),
+          explorer_url: solanaExplorerUrl(twap.solana_signature, cluster),
         }
       : null,
     memo_payload: twap.memo_payload,

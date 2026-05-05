@@ -43,6 +43,8 @@ export interface OracleHealthState {
   service: "oracle";
   started_at: string;
   ok: boolean;
+  /** Cluster the oracle is currently committing to. Helps ops verify which side of a devnet→mainnet cutover is live. */
+  cluster: "devnet" | "mainnet-beta" | "testnet";
 
   wallet: {
     public_key: string;
@@ -86,11 +88,13 @@ export function buildInitialState(args: {
   publicKey: string;
   rpcLabel: string;
   startedAt: Date;
+  cluster: "devnet" | "mainnet-beta" | "testnet";
 }): OracleHealthState {
   return {
     service: "oracle",
     started_at: args.startedAt.toISOString(),
     ok: true, // healthy during warm-up; first poll cycle may flip this
+    cluster: args.cluster,
 
     wallet: {
       public_key: args.publicKey,

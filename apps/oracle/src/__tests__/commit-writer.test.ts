@@ -56,6 +56,7 @@ const baseArgs: RegisterCommitCycleArgs = {
   merkle_root: "0x" + "00".repeat(32),
   memo_payload: '{"some":"memo"}',
   leaves,
+  cluster: "devnet",
 };
 
 describe("registerCommitCycle wire-protocol parameters", () => {

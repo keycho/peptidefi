@@ -1,6 +1,29 @@
 import bs58 from "bs58";
 import { z } from "zod";
 
+// ─── Cluster derivation ────────────────────────────────────────────
+//
+// Stamp every commit_cycles / twap_commits row with the Solana cluster
+// the oracle is committing to. Source of truth: the SOLANA_CLUSTER env
+// var. If unset, derived from ORACLE_RPC_URL — this keeps existing
+// devnet deploys working without an env-var change.
+//
+// Row tagging matters because mainnet and devnet history coexist in
+// one DB after the migration; verification API responses serve the
+// per-row cluster, not a service-wide guess.
+
+export type SolanaCluster = "devnet" | "mainnet-beta" | "testnet";
+
+function clusterFromRpcUrl(url: string): SolanaCluster {
+  const lower = url.toLowerCase();
+  if (lower.includes("devnet")) return "devnet";
+  if (lower.includes("testnet")) return "testnet";
+  // Helius mainnet, public mainnet RPC, custom mainnet — default
+  // assumption. Operator can override via SOLANA_CLUSTER if the RPC
+  // URL doesn't contain a recognisable cluster substring.
+  return "mainnet-beta";
+}
+
 /**
  * Environment-variable loading + validation for the oracle service.
  *
@@ -73,6 +96,12 @@ const envSchema = z.object({
 
   PEPTIDE_ORACLE_AUTHORITY_PUBKEY: z.string().optional(),
   NODE_ENV: z.string().optional(),
+
+  // Optional. Stamped on every commit_cycles / twap_commits row.
+  // If absent, derived from ORACLE_RPC_URL via clusterFromRpcUrl().
+  SOLANA_CLUSTER: z
+    .enum(["devnet", "mainnet-beta", "testnet"])
+    .optional(),
 });
 
 // ─── Public types ──────────────────────────────────────────────────────
@@ -85,6 +114,8 @@ export interface OracleConfig {
 
   rpcUrl: string;
   rpcUrlFallback: string | null;
+  /** Cluster value stamped on every row this oracle writes. */
+  solanaCluster: SolanaCluster;
 
   supabaseUrl: string;
   supabaseSecretKey: string;
@@ -190,6 +221,7 @@ export function loadConfig(): OracleConfig {
 
     rpcUrl: env.ORACLE_RPC_URL,
     rpcUrlFallback: env.ORACLE_RPC_URL_FALLBACK ?? null,
+    solanaCluster: env.SOLANA_CLUSTER ?? clusterFromRpcUrl(env.ORACLE_RPC_URL),
 
     supabaseUrl: env.SUPABASE_URL,
     supabaseSecretKey: env.SUPABASE_SECRET_KEY,

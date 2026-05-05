@@ -5,7 +5,9 @@ import {
   loadOracleApiConfig,
   solscanUrl,
   solanaExplorerUrl,
+  type SolanaCluster,
 } from "../../oracle-config";
+import { clusterQuerySchema } from "../../validators";
 import { sendError } from "../../errors";
 
 /**
@@ -26,13 +28,15 @@ import { sendError } from "../../errors";
  * round-trip.
  */
 
-const listQuerySchema = z.object({
-  limit: z.coerce.number().int().min(1).max(200).default(50),
-  cursor: z.coerce.number().int().positive().optional(),
-  status: z
-    .enum(["pending", "submitted", "finalized", "failed", "all"])
-    .default("finalized"),
-});
+const listQuerySchema = z
+  .object({
+    limit: z.coerce.number().int().min(1).max(200).default(50),
+    cursor: z.coerce.number().int().positive().optional(),
+    status: z
+      .enum(["pending", "submitted", "finalized", "failed", "all"])
+      .default("finalized"),
+  })
+  .merge(clusterQuerySchema);
 
 export async function listCyclesHandler(req: Request, res: Response): Promise<void> {
   const parsed = listQuerySchema.safeParse(req.query);
@@ -40,14 +44,17 @@ export async function listCyclesHandler(req: Request, res: Response): Promise<vo
     sendError(res, 400, "BAD_REQUEST", parsed.error.message);
     return;
   }
-  const { limit, cursor, status } = parsed.data;
+  const { limit, cursor, status, cluster } = parsed.data;
   const supabase = adminClientUntyped();
-  const config = loadOracleApiConfig();
+  // Loaded for the fallback when a row has no cluster column populated
+  // (shouldn't happen post-0033 since the column is NOT NULL, but the
+  // 0033 default is 'devnet' so the fallthrough is safe).
+  loadOracleApiConfig();
 
   let query = supabase
     .from("commit_cycles")
     .select(
-      "cycle_id, started_at, completed_at, observation_count, merkle_root, status, solana_signature, solana_slot, submitted_at, finalized_at",
+      "cycle_id, started_at, completed_at, observation_count, merkle_root, status, solana_signature, solana_slot, submitted_at, finalized_at, cluster",
     )
     .order("cycle_id", { ascending: false })
     .limit(limit);
@@ -56,6 +63,9 @@ export async function listCyclesHandler(req: Request, res: Response): Promise<vo
   }
   if (cursor !== undefined) {
     query = query.lt("cycle_id", cursor);
+  }
+  if (cluster !== undefined) {
+    query = query.eq("cluster", cluster);
   }
   const { data, error } = await query;
   if (error) {
@@ -67,7 +77,7 @@ export async function listCyclesHandler(req: Request, res: Response): Promise<vo
     rows.length === limit ? rows[rows.length - 1]!.cycle_id : null;
 
   res.json({
-    cycles: rows.map((r) => shapeCycle(r, config.cluster)),
+    cycles: rows.map((r) => shapeCycle(r)),
     next_cursor: nextCursor,
   });
 }
@@ -80,13 +90,12 @@ export async function getCycleHandler(req: Request, res: Response): Promise<void
   }
   const cycleId = Number(idParam);
   const supabase = adminClientUntyped();
-  const config = loadOracleApiConfig();
 
   // 1. Cycle row.
   const { data: cycle, error: cErr } = await supabase
     .from("commit_cycles")
     .select(
-      "cycle_id, started_at, completed_at, observation_count, merkle_root, memo_payload, status, solana_signature, solana_slot, submitted_at, finalized_at, retry_count, last_error",
+      "cycle_id, started_at, completed_at, observation_count, merkle_root, memo_payload, status, solana_signature, solana_slot, submitted_at, finalized_at, retry_count, last_error, cluster",
     )
     .eq("cycle_id", cycleId)
     .maybeSingle();
@@ -116,7 +125,7 @@ export async function getCycleHandler(req: Request, res: Response): Promise<void
   }
 
   res.json({
-    ...shapeCycle(cycle, config.cluster),
+    ...shapeCycle(cycle),
     memo_payload: cycle.memo_payload,
     retry_count: cycle.retry_count ?? 0,
     last_error: cycle.last_error ?? null,
@@ -141,12 +150,29 @@ interface CycleRow {
   solana_slot: number | string | null;
   submitted_at: string | null;
   finalized_at: string | null;
+  cluster: string | null;
 }
 
-function shapeCycle(
-  row: CycleRow,
-  cluster: ReturnType<typeof loadOracleApiConfig>["cluster"],
-): Record<string, unknown> {
+/**
+ * Normalise the row's cluster column (text in DB) to the SolanaCluster
+ * union the URL helpers expect. Migration 0033 stamps every row with a
+ * known value; the fallback to 'devnet' is a defence against a row
+ * that pre-dated the migration and somehow survived without backfill.
+ */
+function rowCluster(row: { cluster: string | null }): SolanaCluster {
+  switch (row.cluster) {
+    case "mainnet-beta":
+    case "devnet":
+    case "testnet":
+      return row.cluster;
+    case "mainnet":
+      return "mainnet-beta";
+    default:
+      return "devnet";
+  }
+}
+
+function shapeCycle(row: CycleRow): Record<string, unknown> {
   const cycleId = typeof row.cycle_id === "string" ? Number(row.cycle_id) : row.cycle_id;
   const slot =
     row.solana_slot === null
@@ -154,6 +180,7 @@ function shapeCycle(
       : typeof row.solana_slot === "string"
         ? Number(row.solana_slot)
         : row.solana_slot;
+  const cluster = rowCluster(row);
   return {
     cycle_id: cycleId,
     started_at: row.started_at,
@@ -161,6 +188,7 @@ function shapeCycle(
     observation_count: row.observation_count,
     merkle_root: row.merkle_root,
     status: row.status,
+    cluster,
     solana: row.solana_signature
       ? {
           signature: row.solana_signature,

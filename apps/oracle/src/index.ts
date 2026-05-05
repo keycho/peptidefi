@@ -62,6 +62,7 @@ const health: OracleHealthState = buildInitialState({
   publicKey: config.solanaPublicKey,
   rpcLabel: rpcLabelFromUrl(config.rpcUrl),
   startedAt,
+  cluster: config.solanaCluster,
 });
 
 // ─── Shutdown wiring ───────────────────────────────────────────────────
@@ -174,6 +175,7 @@ async function main(): Promise<void> {
         payer,
         minBalanceLamports,
         confirmationTimeoutMs: config.confirmation.timeoutMs,
+        cluster: config.solanaCluster,
       }),
       runLongTailPoller({
         sql,
@@ -190,6 +192,7 @@ async function main(): Promise<void> {
         payer,
         minBalanceLamports,
         confirmationTimeoutMs: config.confirmation.timeoutMs,
+        cluster: config.solanaCluster,
       }),
     ]);
     console.log("[shutdown] all pollers exited");

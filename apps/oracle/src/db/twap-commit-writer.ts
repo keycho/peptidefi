@@ -28,6 +28,12 @@ export interface RegisterTwapCommitArgs {
   observation_set_root: string;
   /** Canonical UTF-8 memo body from buildTwapCommit. */
   memo_payload: string;
+  /**
+   * Solana cluster the row is being committed to. Stamped on
+   * twap_commits.cluster (added in migration 0033) so historical rows
+   * remain identifiable across the devnet → mainnet cutover.
+   */
+  cluster: "devnet" | "mainnet-beta" | "testnet";
 }
 
 export interface RegisteredTwapCommit {
@@ -59,7 +65,8 @@ export async function registerTwapCommit(
         window_start,
         window_end,
         observation_set_root,
-        memo_payload
+        memo_payload,
+        cluster
       ) VALUES (
         ${args.peptide_code},
         ${args.twap_value}::numeric,
@@ -67,7 +74,8 @@ export async function registerTwapCommit(
         ${args.window_start},
         ${args.window_end},
         ${args.observation_set_root},
-        ${args.memo_payload}
+        ${args.memo_payload},
+        ${args.cluster}
       )
       ON CONFLICT (peptide_code, computed_at) DO NOTHING
       RETURNING id, status::text AS status
