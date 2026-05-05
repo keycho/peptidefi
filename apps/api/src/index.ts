@@ -80,6 +80,8 @@ function buildApp(): express.Express {
           "http://localhost:5173",
           "http://127.0.0.1:3000",
           "http://127.0.0.1:5173",
+          "https://biohash.network",
+          "https://www.biohash.network",
         ],
         env_extra_count: (process.env.CORS_ORIGINS ?? "")
           .split(",")
