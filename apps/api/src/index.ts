@@ -13,6 +13,7 @@ import {
 import { getCycleHandler, listCyclesHandler } from "./routes/v1/cycles";
 import { getObservationHandler } from "./routes/v1/observations";
 import { getTwapHandler } from "./routes/v1/twaps";
+import { getPeptideVendorPricesHandler } from "./routes/v1/vendor-prices";
 import { verifyObservationHandler } from "./routes/v1/verify";
 
 /**
@@ -127,6 +128,10 @@ function buildApp(): express.Express {
   app.get("/v1/status", asyncRoute(statusHandler));
   app.get("/v1/peptides", asyncRoute(listPeptidesHandler));
   app.get("/v1/peptides/:id", asyncRoute(getPeptideHandler));
+  app.get(
+    "/v1/peptides/:code/vendor-prices",
+    asyncRoute(getPeptideVendorPricesHandler),
+  );
   app.get("/v1/cycles", asyncRoute(listCyclesHandler));
   app.get("/v1/cycles/:id", asyncRoute(getCycleHandler));
   app.get("/v1/observations/:id", asyncRoute(getObservationHandler));
