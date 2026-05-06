@@ -1,0 +1,147 @@
+{
+  "address": "2cKMtgXPQt1zT8aWzBAh9LkH3Cf11ris6NDBjrq9J8s7",
+  "metadata": {
+    "name": "biohash_peg",
+    "version": "0.1.0",
+    "spec": "0.1.0",
+    "description": "BioHash peg program — mainnet IDL for the one-shot init script. Same code as the devnet build; only the program address differs."
+  },
+  "instructions": [
+    {
+      "name": "initialize_reserve_state",
+      "discriminator": [171, 84, 56, 181, 76, 29, 150, 62],
+      "accounts": [
+        { "name": "payer", "writable": true, "signer": true },
+        {
+          "name": "reserve_state",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              { "kind": "const", "value": [114, 101, 115, 101, 114, 118, 101, 95, 115, 116, 97, 116, 101] }
+            ]
+          }
+        },
+        {
+          "name": "reserve_vault_authority",
+          "pda": {
+            "seeds": [
+              { "kind": "const", "value": [114, 101, 115, 101, 114, 118, 101, 95, 118, 97, 117, 108, 116] }
+            ]
+          }
+        },
+        { "name": "usdc_mint" },
+        { "name": "reserve_usdc_vault", "writable": true, "signer": true },
+        { "name": "system_program", "address": "11111111111111111111111111111111" },
+        { "name": "token_program", "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA" },
+        { "name": "rent", "address": "SysvarRent111111111111111111111111111111111" }
+      ],
+      "args": [{ "name": "usdc_mint", "type": "pubkey" }]
+    },
+    {
+      "name": "initialize_peg_state",
+      "discriminator": [102, 178, 203, 188, 221, 48, 66, 14],
+      "accounts": [
+        { "name": "payer", "writable": true, "signer": true },
+        {
+          "name": "peg_state",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              { "kind": "const", "value": [112, 101, 103, 95, 115, 116, 97, 116, 101] },
+              { "kind": "arg", "path": "peptide_code" }
+            ]
+          }
+        },
+        { "name": "peptide_token_mint" },
+        { "name": "system_program", "address": "11111111111111111111111111111111" }
+      ],
+      "args": [
+        { "name": "peptide_code", "type": { "array": ["u8", 16] } },
+        { "name": "update_authority", "type": "pubkey" },
+        { "name": "peptide_token_mint", "type": "pubkey" },
+        { "name": "max_twap_age_slots", "type": "u64" },
+        { "name": "max_twap_step_bps", "type": "u16" }
+      ]
+    },
+    {
+      "name": "update_peg_state",
+      "discriminator": [198, 92, 207, 70, 175, 255, 200, 13],
+      "accounts": [
+        { "name": "update_authority", "signer": true, "relations": ["peg_state"] },
+        {
+          "name": "peg_state",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              { "kind": "const", "value": [112, 101, 103, 95, 115, 116, 97, 116, 101] },
+              { "kind": "account", "path": "peg_state.peptide_code", "account": "PegState" }
+            ]
+          }
+        },
+        { "name": "clock", "address": "SysvarC1ock11111111111111111111111111111111" }
+      ],
+      "args": [
+        { "name": "new_twap", "type": "u64" },
+        { "name": "observation_set_root", "type": { "array": ["u8", 32] } }
+      ]
+    }
+  ],
+  "accounts": [
+    { "name": "PegState", "discriminator": [100, 166, 10, 181, 119, 220, 240, 156] },
+    { "name": "ReserveState", "discriminator": [202, 212, 166, 155, 191, 36, 170, 86] }
+  ],
+  "errors": [
+    { "code": 6000, "name": "NoTwapSet", "msg": "No TWAP has been pushed yet." },
+    { "code": 6001, "name": "TwapStale", "msg": "TWAP is older than max_twap_age_slots." },
+    { "code": 6002, "name": "TwapStepTooLarge", "msg": "TWAP step exceeds max_twap_step_bps." },
+    { "code": 6003, "name": "UnauthorizedUpdater", "msg": "Caller did not match peg_state.update_authority." },
+    { "code": 6004, "name": "ZeroAmount", "msg": "Amount must be greater than zero." },
+    { "code": 6005, "name": "SlippageExceeded", "msg": "Slippage exceeded." },
+    { "code": 6006, "name": "InsufficientReserve", "msg": "Reserve USDC balance insufficient." },
+    { "code": 6007, "name": "ArithmeticOverflow", "msg": "Arithmetic overflow." },
+    { "code": 6008, "name": "MintAuthorityMismatch", "msg": "peptide_token_mint.mint_authority does not match the derived peg_state PDA." }
+  ],
+  "types": [
+    {
+      "name": "PegState",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          { "name": "peptide_code", "type": { "array": ["u8", 16] } },
+          { "name": "peptide_token_mint", "type": "pubkey" },
+          { "name": "update_authority", "type": "pubkey" },
+          { "name": "current_twap", "type": "u64" },
+          { "name": "current_twap_slot", "type": "u64" },
+          { "name": "current_twap_updated_at", "type": "i64" },
+          { "name": "current_twap_observation_set_root", "type": { "array": ["u8", 32] } },
+          { "name": "max_twap_age_slots", "type": "u64" },
+          { "name": "max_twap_step_bps", "type": "u16" },
+          { "name": "mint_fee_bps", "type": "u16" },
+          { "name": "burn_fee_bps", "type": "u16" },
+          { "name": "total_minted", "type": "u128" },
+          { "name": "total_burned", "type": "u128" },
+          { "name": "mint_count", "type": "u64" },
+          { "name": "burn_count", "type": "u64" },
+          { "name": "update_count", "type": "u64" },
+          { "name": "bump", "type": "u8" },
+          { "name": "_reserved", "type": { "array": ["u8", 64] } }
+        ]
+      }
+    },
+    {
+      "name": "ReserveState",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          { "name": "usdc_mint", "type": "pubkey" },
+          { "name": "usdc_vault", "type": "pubkey" },
+          { "name": "vault_authority_bump", "type": "u8" },
+          { "name": "reserve_state_bump", "type": "u8" },
+          { "name": "total_usdc_in", "type": "u128" },
+          { "name": "total_usdc_out", "type": "u128" },
+          { "name": "_reserved", "type": { "array": ["u8", 64] } }
+        ]
+      }
+    }
+  ]
+}
