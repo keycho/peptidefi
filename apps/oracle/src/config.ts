@@ -102,6 +102,19 @@ const envSchema = z.object({
   SOLANA_CLUSTER: z
     .enum(["devnet", "mainnet-beta", "testnet"])
     .optional(),
+
+  // ─── Peg pusher ───────────────────────────────────────────────
+  // Optional. When PEG_PUSHER_ENABLED is false (or unset), the
+  // pusher subsystem stays dormant and the oracle behaves exactly
+  // as before — devnet operation continues to work unmodified.
+  PEG_PUSHER_ENABLED: z
+    .string()
+    .optional()
+    .transform((v) => v === "true" || v === "1"),
+  PEG_PROGRAM_ID: z.string().optional(),
+  PEG_PEPTIDES: z.string().optional(),
+  PEG_PUSH_PRIORITY_FEE_LAMPORTS: z.coerce.number().int().nonnegative().default(1000),
+  PEG_PUSH_MAX_RETRIES: z.coerce.number().int().nonnegative().default(3),
 });
 
 // ─── Public types ──────────────────────────────────────────────────────
@@ -148,6 +161,21 @@ export interface OracleConfig {
   retry: {
     maxTotalRetries: number;
     longTailIntervalMs: number;
+  };
+
+  /**
+   * Peg-pusher configuration. `enabled=false` disables the
+   * subsystem entirely; nothing else in this block is read in that
+   * case. `peptideCodes` is the lower-cased trim-normalised set
+   * of peptide codes the pusher is allowed to push for; matched
+   * exactly against `twap_commits.peptide_code` at the call site.
+   */
+  pegPusher: {
+    enabled: boolean;
+    programId: string | null;
+    peptideCodes: ReadonlySet<string>;
+    priorityFeeMicroLamports: number;
+    maxRetries: number;
   };
 
   nodeEnv: string;
@@ -256,6 +284,52 @@ export function loadConfig(): OracleConfig {
       longTailIntervalMs: env.ORACLE_LONG_TAIL_INTERVAL_MS,
     },
 
+    pegPusher: parsePegPusherConfig(env),
+
     nodeEnv: env.NODE_ENV ?? "development",
+  };
+}
+
+function parsePegPusherConfig(
+  env: z.infer<typeof envSchema>,
+): OracleConfig["pegPusher"] {
+  const enabled = Boolean(env.PEG_PUSHER_ENABLED);
+  if (!enabled) {
+    return {
+      enabled: false,
+      programId: null,
+      peptideCodes: new Set<string>(),
+      priorityFeeMicroLamports: env.PEG_PUSH_PRIORITY_FEE_LAMPORTS,
+      maxRetries: env.PEG_PUSH_MAX_RETRIES,
+    };
+  }
+
+  // Enabled — require the program id explicitly. Refuse to start
+  // misconfigured: a pusher that's "on" but doesn't know which
+  // program to call would silently no-op every push.
+  const programId = env.PEG_PROGRAM_ID?.trim();
+  if (!programId) {
+    throw new Error(
+      "PEG_PROGRAM_ID is required when PEG_PUSHER_ENABLED=true",
+    );
+  }
+
+  // Comma-separated codes; tolerant to whitespace and surrounding
+  // commas. Empty list with enabled=true is allowed (pusher is on
+  // but has nothing to push) — useful for staging the env-var roll-
+  // out before adding the first peptide.
+  const peptideCodes = new Set(
+    (env.PEG_PEPTIDES ?? "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0),
+  );
+
+  return {
+    enabled: true,
+    programId,
+    peptideCodes,
+    priorityFeeMicroLamports: env.PEG_PUSH_PRIORITY_FEE_LAMPORTS,
+    maxRetries: env.PEG_PUSH_MAX_RETRIES,
   };
 }

@@ -24,6 +24,7 @@ import {
 import type { Keypair } from "@solana/web3.js";
 import { buildSignedMemoTx } from "../solana/memo-tx";
 import { buildTwapCommit } from "../twap/memo";
+import type { PegPusher } from "../peg/peg-pusher";
 
 /**
  * TWAP commit poller — Phase D scope (§3.3).
@@ -71,6 +72,13 @@ export interface TwapPollerOptions {
   hourSkewMinutes?: number;
   /** Solana cluster stamped on every twap_commits row this poller writes. */
   cluster: "devnet" | "mainnet-beta" | "testnet";
+  /**
+   * Optional peg-pusher hook. When provided, invoked best-effort
+   * after each TWAP commit reaches 'finalized' status. Push failures
+   * are logged inside the pusher and never propagated back to the
+   * TWAP commit pipeline.
+   */
+  pegPusher?: PegPusher | null;
 }
 
 export async function runTwapPoller(opts: TwapPollerOptions): Promise<void> {
@@ -172,8 +180,15 @@ async function reconcileInFlight(opts: TwapPollerOptions): Promise<void> {
   const inFlight = await findNextSubmittedTwap(opts.sql);
   if (!inFlight) return;
 
-  const { id, peptide_code, solana_signature, submitted_at, retry_count } =
-    inFlight;
+  const {
+    id,
+    peptide_code,
+    solana_signature,
+    submitted_at,
+    retry_count,
+    twap_value,
+    observation_set_root,
+  } = inFlight;
   let status;
   try {
     status = await opts.solana.getSignatureStatus(solana_signature);
@@ -202,6 +217,12 @@ async function reconcileInFlight(opts: TwapPollerOptions): Promise<void> {
       `[twap-poller] peptide=${peptide_code} FINALIZED slot=${slot} ` +
         `sig=${solana_signature}`,
     );
+    await invokePegPusherBestEffort(opts, {
+      peptide_code,
+      twap_value,
+      observation_set_root,
+      slot,
+    });
     return;
   }
 
@@ -245,6 +266,12 @@ async function reconcileInFlight(opts: TwapPollerOptions): Promise<void> {
     console.log(
       `[twap-poller] peptide=${peptide_code} FINALIZED (late) slot=${slot}`,
     );
+    await invokePegPusherBestEffort(opts, {
+      peptide_code,
+      twap_value,
+      observation_set_root,
+      slot,
+    });
     return;
   }
 
@@ -576,4 +603,83 @@ async function handlePostSubmitFailure(
     0,
     opts.health.twap.in_flight_count - 1,
   );
+}
+
+// ─── Peg-pusher hook ───────────────────────────────────────────────
+
+interface PegPushArgs {
+  peptide_code: string;
+  /** numeric(20,6) text from twap_commits.twap_value, e.g. "5.998000". */
+  twap_value: string;
+  /** "0x" + 64 hex from twap_commits.observation_set_root. */
+  observation_set_root: string;
+  /** Slot at which the TWAP commit landed on-chain. */
+  slot: number;
+}
+
+/**
+ * Best-effort: invoke the peg pusher after a TWAP commit reaches
+ * 'finalized'. Never throws back to the caller; never affects the
+ * twap_commits row's lifecycle. Logs locally, increments
+ * health.peg_pusher.* counters via the pusher's own metrics(),
+ * which the index.ts wiring snapshots into health.
+ */
+async function invokePegPusherBestEffort(
+  opts: TwapPollerOptions,
+  args: PegPushArgs,
+): Promise<void> {
+  const pusher = opts.pegPusher;
+  if (!pusher) return;
+  try {
+    const twapValue = parseTwapToBaseUnits(args.twap_value);
+    const observationSetRoot = hexToBytes32(args.observation_set_root);
+    await pusher.pushPegState({
+      peptideCode: args.peptide_code,
+      twapValue,
+      observationSetRoot,
+      commitAtSlot: BigInt(args.slot),
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(
+      `[twap-poller] peg-pusher invocation failed for peptide=${args.peptide_code}: ${msg}`,
+    );
+  }
+}
+
+/**
+ * Parse a numeric(20,6) text value into the on-chain peg unit
+ * (micro-USDC per mg × 10⁶, BigInt). Pure string→bigint with no
+ * float intermediate. Spec §02 §3.3.
+ *
+ *   "5.998000" → 5_998_000n
+ *   "5.998"    → 5_998_000n
+ *   "5"        → 5_000_000n
+ */
+function parseTwapToBaseUnits(twap: string): bigint {
+  const match = twap.trim().match(/^(\d+)(?:\.(\d{1,6}))?$/);
+  if (!match) {
+    throw new Error(`invalid twap value (not numeric(20,6) string): ${twap}`);
+  }
+  const intPart = match[1] ?? "0";
+  const fracPart = (match[2] ?? "").padEnd(6, "0").slice(0, 6);
+  const stripped = (intPart + fracPart).replace(/^0+(?=\d)/, "");
+  return BigInt(stripped || "0");
+}
+
+/**
+ * Decode "0x" + 64 hex into a 32-byte Uint8Array.
+ */
+function hexToBytes32(hex: string): Uint8Array {
+  const clean = hex.startsWith("0x") || hex.startsWith("0X") ? hex.slice(2) : hex;
+  if (clean.length !== 64 || !/^[0-9a-fA-F]+$/.test(clean)) {
+    throw new Error(
+      `invalid observation_set_root (expected "0x" + 64 hex, got "${hex}")`,
+    );
+  }
+  const bytes = new Uint8Array(32);
+  for (let i = 0; i < 32; i++) {
+    bytes[i] = parseInt(clean.slice(i * 2, i * 2 + 2), 16);
+  }
+  return bytes;
 }
