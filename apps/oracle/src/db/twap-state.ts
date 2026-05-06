@@ -149,6 +149,10 @@ export async function findNextSubmittedTwap(sql: SqlClient): Promise<{
   solana_signature: string;
   submitted_at: Date;
   retry_count: number;
+  /** numeric(20,6); arrives as a string from postgres.js. e.g. "5.998000". */
+  twap_value: string;
+  /** "0x" + 64 hex. Same value embedded in the TWAP commit memo + needed by peg-pusher. */
+  observation_set_root: string;
 } | null> {
   const rows = await sql<
     {
@@ -157,9 +161,13 @@ export async function findNextSubmittedTwap(sql: SqlClient): Promise<{
       solana_signature: string;
       submitted_at: Date;
       retry_count: number;
+      twap_value: string;
+      observation_set_root: string;
     }[]
   >`
-    SELECT id, peptide_code, solana_signature, submitted_at, retry_count
+    SELECT id, peptide_code, solana_signature, submitted_at, retry_count,
+           twap_value::text AS twap_value,
+           observation_set_root
     FROM   public.twap_commits
     WHERE  status = 'submitted'
       AND  solana_signature IS NOT NULL

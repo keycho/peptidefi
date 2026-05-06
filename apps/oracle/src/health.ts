@@ -74,6 +74,24 @@ export interface OracleHealthState {
     last_error_class: string | null;
     blockhash_age_seconds: number;
   };
+
+  /**
+   * Peg-pusher status. `enabled=false` means the env var
+   * PEG_PUSHER_ENABLED is unset/false; the rest of the block reflects
+   * empty defaults. When enabled=true, push_count_24h /
+   * failed_count_24h / skipped_count_24h are 24-hour rolling counters,
+   * and last_push_* describe the most recent successful push.
+   */
+  peg_pusher: {
+    enabled: boolean;
+    peptides: string[];
+    last_push_at: string | null;
+    last_push_peptide: string | null;
+    last_push_signature: string | null;
+    push_count_24h: number;
+    failed_count_24h: number;
+    skipped_count_24h: number;
+  };
 }
 
 // ─── Builders ──────────────────────────────────────────────────────────
@@ -89,6 +107,7 @@ export function buildInitialState(args: {
   rpcLabel: string;
   startedAt: Date;
   cluster: "devnet" | "mainnet-beta" | "testnet";
+  pegPusher?: { enabled: boolean; peptides: string[] };
 }): OracleHealthState {
   return {
     service: "oracle",
@@ -123,6 +142,17 @@ export function buildInitialState(args: {
       last_error_at: null,
       last_error_class: null,
       blockhash_age_seconds: 0,
+    },
+
+    peg_pusher: {
+      enabled: args.pegPusher?.enabled ?? false,
+      peptides: args.pegPusher?.peptides ?? [],
+      last_push_at: null,
+      last_push_peptide: null,
+      last_push_signature: null,
+      push_count_24h: 0,
+      failed_count_24h: 0,
+      skipped_count_24h: 0,
     },
   };
 }

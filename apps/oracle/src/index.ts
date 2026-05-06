@@ -12,6 +12,8 @@ import { runLongTailPoller } from "./pollers/long-tail-poller";
 import { runTwapPoller } from "./pollers/twap-poller";
 import { OracleSolanaClient } from "./solana/client";
 import { loadOracleKeypair } from "./solana/keypair";
+import { PegPusher } from "./peg/peg-pusher";
+import { Connection, PublicKey } from "@solana/web3.js";
 
 /**
  * peptide-oracle on-chain commit service — entry point.
@@ -63,6 +65,10 @@ const health: OracleHealthState = buildInitialState({
   rpcLabel: rpcLabelFromUrl(config.rpcUrl),
   startedAt,
   cluster: config.solanaCluster,
+  pegPusher: {
+    enabled: config.pegPusher.enabled,
+    peptides: [...config.pegPusher.peptideCodes].sort(),
+  },
 });
 
 // ─── Shutdown wiring ───────────────────────────────────────────────────
@@ -147,9 +153,42 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
+  // Construct the peg pusher (or null when disabled). Uses its own
+  // Connection — same RPC URL + same keypair as the cycle/TWAP
+  // pollers, but the AnchorProvider underneath wants a web3.js
+  // Connection directly rather than the OracleSolanaClient wrapper.
+  let pegPusher: PegPusher | null = null;
+  if (config.pegPusher.enabled) {
+    if (!config.pegPusher.programId) {
+      // parsePegPusherConfig already enforces this, but the type
+      // narrowing here gives the rest of the function a non-null id.
+      console.error("[fatal] pegPusher.enabled=true but programId missing");
+      process.exit(1);
+    }
+    const pegConn = new Connection(config.rpcUrl, {
+      commitment: "confirmed",
+      confirmTransactionInitialTimeout: config.confirmation.timeoutMs,
+    });
+    pegPusher = new PegPusher(pegConn, payer, {
+      programId: new PublicKey(config.pegPusher.programId),
+      enabled: true,
+      peptideCodes: config.pegPusher.peptideCodes,
+      priorityFeeMicroLamports: config.pegPusher.priorityFeeMicroLamports,
+      maxRetries: config.pegPusher.maxRetries,
+    });
+    console.log(
+      `[startup] peg pusher enabled program=${config.pegPusher.programId} ` +
+        `peptides=[${[...config.pegPusher.peptideCodes].sort().join(",")}] ` +
+        `priority_fee=${config.pegPusher.priorityFeeMicroLamports} ` +
+        `max_retries=${config.pegPusher.maxRetries}`,
+    );
+  } else {
+    console.log("[startup] peg pusher disabled");
+  }
+
   const healthServer = startHealthServer({
     port: config.healthPort,
-    state: () => health,
+    state: () => snapshotWithPegMetrics(health, pegPusher),
     liveness: {
       startedAt,
       warmupMs: config.health.warmupMs,
@@ -193,6 +232,7 @@ async function main(): Promise<void> {
         minBalanceLamports,
         confirmationTimeoutMs: config.confirmation.timeoutMs,
         cluster: config.solanaCluster,
+        pegPusher,
       }),
     ]);
     console.log("[shutdown] all pollers exited");
@@ -267,6 +307,33 @@ function rpcLabelFromUrl(url: string): string {
   } catch {
     return "unknown";
   }
+}
+
+/**
+ * Pull-model integration: each /health request takes a fresh
+ * snapshot of the pusher's 24h rolling counters and merges them
+ * into the health state. Avoids the pusher having to write back
+ * into the mutable health object on every push (which would
+ * couple two modules' shutdown order to each other).
+ */
+function snapshotWithPegMetrics(
+  base: OracleHealthState,
+  pusher: PegPusher | null,
+): OracleHealthState {
+  if (!pusher) return base;
+  const m = pusher.metrics();
+  return {
+    ...base,
+    peg_pusher: {
+      ...base.peg_pusher,
+      last_push_at: m.last_push_at,
+      last_push_peptide: m.last_push_peptide,
+      last_push_signature: m.last_push_signature,
+      push_count_24h: m.push_count_24h,
+      failed_count_24h: m.failed_count_24h,
+      skipped_count_24h: m.skipped_count_24h,
+    },
+  };
 }
 
 // `startedAtIso` is referenced by future tickets when the

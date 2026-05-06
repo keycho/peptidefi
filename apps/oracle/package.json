@@ -12,6 +12,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@coral-xyz/anchor": "^0.31.1",
     "@peptide-oracle/db": "workspace:*",
     "@peptide-oracle/shared": "workspace:*",
     "@solana/web3.js": "^1.98.4",
