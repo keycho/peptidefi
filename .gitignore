@@ -55,3 +55,8 @@ next-env.d.ts
 # peg program if it's checked out on this branch; never commit target/).
 target/
 **/*.rs.bk
+
+# scripts/initialize-peg-mainnet.ts outputs (operator-machine-only;
+# contain the $bBPC157 mint keypair + signed-transaction journal).
+scripts/peg-mainnet-init-output.json
+scripts/bbpc157-mint-keypair.json
