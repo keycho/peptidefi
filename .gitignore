@@ -62,3 +62,6 @@ target/
 # contain the $bBPC157 mint keypair + signed-transaction journal).
 scripts/peg-mainnet-init-output.json
 scripts/bbpc157-mint-keypair.json
+
+# scripts/create-token-metadata.ts output (signed-transaction journal).
+scripts/bbpc157-metadata-output.json

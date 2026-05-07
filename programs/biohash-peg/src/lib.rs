@@ -76,4 +76,22 @@ pub mod biohash_peg {
     ) -> Result<()> {
         instructions::update::update_handler(ctx, new_twap, observation_set_root)
     }
+
+    /// Create the Metaplex Token Metadata account for the peptide
+    /// token mint. One-shot: subsequent calls revert in Metaplex
+    /// because the metadata account already exists.
+    ///
+    /// The metadata's update_authority is set to `payer` — after
+    /// creation, the deployer can update name/symbol/URI directly
+    /// via Metaplex without needing another peg-program upgrade.
+    pub fn create_token_metadata(
+        ctx: Context<CreateTokenMetadata>,
+        name: String,
+        symbol: String,
+        uri: String,
+    ) -> Result<()> {
+        instructions::create_token_metadata::create_token_metadata_handler(
+            ctx, name, symbol, uri,
+        )
+    }
 }

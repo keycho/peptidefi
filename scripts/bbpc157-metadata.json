@@ -1,0 +1,14 @@
+{
+  "name": "BioHash Pegged BPC-157",
+  "symbol": "bBPC157",
+  "description": "USDC-backed token pegged to the BioHash oracle's TWAP for BPC-157 peptide. Mint and burn at the published TWAP. Reserve absorbs drift.",
+  "image": "https://biohash.network/assets/bbpc157-logo.svg",
+  "external_url": "https://biohash.network/bbpc157",
+  "attributes": [
+    { "trait_type": "Type",     "value": "Peg-Backed Token" },
+    { "trait_type": "Backing",  "value": "USDC" },
+    { "trait_type": "Peptide",  "value": "BPC-157" },
+    { "trait_type": "Decimals", "value": "6" },
+    { "trait_type": "Oracle",   "value": "BioHash TWAP" }
+  ]
+}
