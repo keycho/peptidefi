@@ -117,10 +117,51 @@ nothing else in this runbook applies.
 Most likely to succeed quickly. Anchor's regular build is reasonably
 deterministic when the toolchain version is pinned.
 
+### 2.1 Pre-build edits (REQUIRED — verification-only, do NOT commit)
+
+The source on `claude/peptidefi-season-1-Hae69` has the **Anchor
+placeholder program ID** in `declare_id!()`:
+
+```rust
+declare_id!("Fg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS");
+```
+
+`declare_id!()` embeds the program ID as 32 bytes in the binary. Solana
+Playground would have updated this to the actual mainnet ID before
+deploying. **If you skip this step, your local build's binary will
+differ from the deployed binary by exactly 32 bytes** even when the
+source is otherwise identical — Method 1 will report MISMATCH for the
+wrong reason.
+
+**Edit two files** (verification-only; we'll revert after):
+
 ```bash
-# 1. Checkout the suspected source.
-git fetch --all
-git checkout claude/peptidefi-season-1-Hae69
+# 1. lib.rs — replace placeholder with mainnet ID.
+# (mac) sed has different in-place semantics than gnu sed; use `gsed`
+# if you've installed coreutils, otherwise use the `-i ''` form below.
+sed -i '' \
+  's|Fg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS|2cKMtgXPQt1zT8aWzBAh9LkH3Cf11ris6NDBjrq9J8s7|g' \
+  programs/biohash-peg/src/lib.rs
+
+# 2. Anchor.toml — same replacement, plus add a [programs.mainnet] entry.
+sed -i '' \
+  's|Fg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS|2cKMtgXPQt1zT8aWzBAh9LkH3Cf11ris6NDBjrq9J8s7|g' \
+  Anchor.toml
+
+# 3. Verify the edits landed.
+grep -n declare_id programs/biohash-peg/src/lib.rs
+# Expect: declare_id!("2cKMtgXPQt1zT8aWzBAh9LkH3Cf11ris6NDBjrq9J8s7");
+grep -n biohash_peg Anchor.toml
+# Expect: biohash_peg = "2cKMtgXPQt1zT8aWzBAh9LkH3Cf11ris6NDBjrq9J8s7" lines
+```
+
+**Don't commit these edits** — they're scratch state for verification.
+Phase C of the metadata work will land them properly on a clean branch.
+
+### 2.2 Build
+
+```bash
+# 1. Source still on the verification checkout (after 2.1 edits).
 git log -1 --oneline
 # Expect: 72a2cd0 fix(peg): box Account fields...
 
@@ -132,7 +173,11 @@ anchor build
 ls -l target/deploy/biohash_peg.so
 # Local size and on-chain Data Length should be EQUAL or within
 # ~100 bytes (Anchor pads). Wildly different = source diverged.
+```
 
+### 2.3 Hash compare
+
+```bash
 # 4. Hash the local build.
 shasum -a 256 target/deploy/biohash_peg.so
 # Record this hash.
@@ -155,10 +200,25 @@ fi
 **If hashes match (`PASSED`):** source is verified. **Stop here.** The
 upgrade is safe.
 
-**If hashes differ:** continue to §3. A mismatch at this stage is *not
-yet* a divergence signal — Solana Playground may have built with
-slightly different toolchain versions than your local. The verifiable
-build in §3 normalises that.
+**If hashes differ:** per the operator decision, **skip Methods 2 and 3
+(Docker / `anchor verify`) and go straight to fresh-program redeploy in
+§5 Option B**. The toolchain rabbithole isn't worth chasing when the
+recovery path is cheap (no minted supply, ~95% rent recovery). Methods
+2 and 3 below remain as documentation for future operators with
+different constraints.
+
+### 2.4 Cleanup (revert verification edits)
+
+After Method 1 completes — pass or fail — revert the §2.1 edits so
+your working tree matches the original commit. The metadata branch
+(Phase C) will land the declare_id update properly on a clean commit.
+
+```bash
+git checkout -- programs/biohash-peg/src/lib.rs Anchor.toml
+# Or, if you also want to clean the build artifacts:
+git checkout -- programs/biohash-peg/src/lib.rs Anchor.toml
+rm -rf target/
+```
 
 ---
 
