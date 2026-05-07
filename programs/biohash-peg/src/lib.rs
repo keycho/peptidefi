@@ -13,7 +13,7 @@ pub mod state;
 
 pub use instructions::*;
 
-declare_id!("Fg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS");
+declare_id!("2cKMtgXPQt1zT8aWzBAh9LkH3Cf11ris6NDBjrq9J8s7");
 
 #[program]
 pub mod biohash_peg {

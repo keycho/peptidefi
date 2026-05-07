@@ -5,11 +5,21 @@ anchor_version = "0.31.1"
 resolution = true
 skip-lint = false
 
+# Cluster targets. Anchor's `--provider.cluster <X>` flag selects which
+# `programs.<X>` entry to use; that entry must match the program ID
+# embedded in the compiled binary via declare_id!() in lib.rs. The
+# binary as-shipped here targets mainnet — the localnet / devnet entries
+# are placeholders for local-only testing and would require updating
+# declare_id!() before re-deploying to those clusters.
+
 [programs.localnet]
 biohash_peg = "Fg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS"
 
 [programs.devnet]
-biohash_peg = "Fg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS"
+biohash_peg = "DAgK6HKtGRt8LFwxhypuEJ225JEhtjiCG3TrcdJmtW4r"
+
+[programs.mainnet]
+biohash_peg = "2cKMtgXPQt1zT8aWzBAh9LkH3Cf11ris6NDBjrq9J8s7"
 
 [registry]
 url = "https://api.apr.dev"
@@ -19,16 +29,10 @@ cluster = "Localnet"
 wallet = "~/.config/solana/id.json"
 
 # Tests run against `solana-test-validator` started by `anchor test`.
-# `anchor test` defaults to localnet — run `anchor test --provider.cluster devnet`
-# to point at the live devnet endpoint after the first deploy.
+# `anchor test` defaults to localnet — for devnet override:
+#   anchor test --provider.cluster devnet
 [scripts]
 test = "pnpm exec ts-mocha -p ./tsconfig.test.json -t 1000000 'tests/**/*.ts'"
 
-# Devnet RPC config, used by `anchor deploy --provider.cluster devnet` and
-# by `anchor test --provider.cluster devnet`. Inherits wallet from [provider].
 [test.validator]
 url = "https://api.devnet.solana.com"
-
-# NOTE: the program id above (Fg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS)
-# is the standard Anchor placeholder. Run `anchor keys sync` after the
-# first `anchor build` to swap in the real keypair-derived program id.
