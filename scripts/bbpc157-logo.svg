@@ -1,0 +1,72 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="bBPC157 — BioHash pegged BPC-157">
+  <!-- Background -->
+  <rect width="512" height="512" fill="#FAFAF7"/>
+
+  <!-- Outer frame: sharp 1px border just inside the bleed -->
+  <rect x="16" y="16" width="480" height="480" fill="none" stroke="#0F1A2E" stroke-width="1"/>
+
+  <!-- Corner brackets (technical-drawing style) -->
+  <g stroke="#0F1A2E" stroke-width="3" fill="none" stroke-linecap="square">
+    <path d="M40 40 L40 96 M40 40 L96 40"/>
+    <path d="M472 40 L472 96 M472 40 L416 40"/>
+    <path d="M40 472 L40 416 M40 472 L96 472"/>
+    <path d="M472 472 L472 416 M472 472 L416 472"/>
+  </g>
+
+  <!-- Top label: section glyph + role -->
+  <text x="256" y="118"
+        text-anchor="middle"
+        font-family="ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, monospace"
+        font-size="14"
+        font-weight="500"
+        letter-spacing="4"
+        fill="#6B7280">§ BIOHASH PEGGED ASSET</text>
+
+  <!-- Horizontal divider above wordmark -->
+  <line x1="96" y1="148" x2="416" y2="148" stroke="#D1D5DB" stroke-width="1"/>
+
+  <!-- Wordmark -->
+  <text x="256" y="270"
+        text-anchor="middle"
+        font-family="ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, monospace"
+        font-size="92"
+        font-weight="700"
+        letter-spacing="-3"
+        fill="#0F1A2E"><tspan fill="#3B82F6">b</tspan>BPC157</text>
+
+  <!-- Subtitle -->
+  <text x="256" y="312"
+        text-anchor="middle"
+        font-family="ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, monospace"
+        font-size="14"
+        letter-spacing="4"
+        fill="#6B7280">USDC-BACKED · TWAP-PEGGED</text>
+
+  <!-- Horizontal divider below subtitle -->
+  <line x1="96" y1="350" x2="416" y2="350" stroke="#D1D5DB" stroke-width="1"/>
+
+  <!-- Peptide-bond glyph: a 5-residue zigzag with the terminal residues
+       in the brand blue. Reads as "peptide chain" without any
+       molecular literalism. -->
+  <g transform="translate(256, 408)" stroke="#0F1A2E" stroke-width="2" fill="none" stroke-linecap="round">
+    <line x1="-96" y1="0"  x2="-48" y2="-20"/>
+    <line x1="-48" y1="-20" x2="0"   y2="0"/>
+    <line x1="0"   y1="0"   x2="48"  y2="-20"/>
+    <line x1="48"  y1="-20" x2="96"  y2="0"/>
+  </g>
+  <g transform="translate(256, 408)" stroke="none">
+    <circle cx="-96" cy="0"   r="9" fill="#3B82F6"/>
+    <circle cx="-48" cy="-20" r="9" fill="#0F1A2E"/>
+    <circle cx="0"   cy="0"   r="9" fill="#0F1A2E"/>
+    <circle cx="48"  cy="-20" r="9" fill="#0F1A2E"/>
+    <circle cx="96"  cy="0"   r="9" fill="#3B82F6"/>
+  </g>
+
+  <!-- Footer: figure code + URL -->
+  <text x="256" y="470"
+        text-anchor="middle"
+        font-family="ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, monospace"
+        font-size="11"
+        letter-spacing="3"
+        fill="#6B7280">FIG. T.01 · BIOHASH.NETWORK</text>
+</svg>
