@@ -17,6 +17,7 @@ import {
 } from "@solana/web3.js";
 
 import idlJson from "./idl.json" with { type: "json" };
+import { logAnomaly } from "../lib/anomalyLog";
 
 /**
  * PegPusher — invokes update_peg_state on the BioHash peg program
@@ -587,6 +588,23 @@ export class PegPusher {
     this.bucket.last_failure_at = new Date(ts).toISOString();
     this.bucket.last_failure_peptide = peptide;
     this.bucket.last_failure_message = message;
+    // File a public anomaly entry. Fire-and-forget — the logger
+    // never throws and the pusher's own metrics already capture
+    // the failure for /health. The anomaly log is the durable
+    // operator-visible record. Skips are NOT logged here (they're
+    // routine pre-flight gates, visible via /health.last_skip_*).
+    void logAnomaly({
+      severity: "error",
+      eventType: "oracle_commit_failed",
+      description: `peg-pusher failed to push ${peptide}: ${message}`,
+      peptideId: peptide,
+      context: {
+        component: "peg-pusher",
+        message,
+        push_count_24h: this.pushTimestamps.length,
+        failed_count_24h: this.failTimestamps.length,
+      },
+    });
     return { signature: null, success: false, skipped: null };
   }
 

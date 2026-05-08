@@ -7,6 +7,7 @@ import {
 } from "./health";
 import { createSqlClient, type SqlClient } from "./db/client";
 import { acquireOracleLock, type AdvisoryLockHandle } from "./advisory-lock";
+import { initAnomalyLog, logAnomaly } from "./lib/anomalyLog";
 import { runCyclePoller } from "./pollers/cycle-poller";
 import { runLongTailPoller } from "./pollers/long-tail-poller";
 import { runTwapPoller } from "./pollers/twap-poller";
@@ -92,6 +93,29 @@ async function main(): Promise<void> {
       `(node=${process.version} env=${config.nodeEnv})`,
   );
   console.log(`[startup] oracle wallet: ${config.solanaPublicKey}`);
+
+  // Initialise the append-only anomaly log before anything that
+  // might fire an event (advisory lock acquisition runs first below
+  // and may emit peg_pusher_lock_stuck on retry).
+  initAnomalyLog({
+    url: config.supabaseUrl,
+    key: config.supabaseSecretKey,
+    service: "oracle",
+  });
+  // Fire a startup event — gives ops a "yes the logger is wired
+  // and reaching Supabase" signal on every fresh deploy without
+  // having to wait for an organic event.
+  void logAnomaly({
+    severity: "info",
+    eventType: "oracle_started",
+    description: `oracle process started (cluster=${config.solanaCluster})`,
+    context: {
+      cluster: config.solanaCluster,
+      node_env: config.nodeEnv,
+      node_version: process.version,
+      peg_pusher_enabled: config.pegPusher.enabled,
+    },
+  });
   console.log(
     `[startup] rpc=${rpcLabelFromUrl(config.rpcUrl)} ` +
       `supabase=${new URL(config.supabaseUrl).host}`,
