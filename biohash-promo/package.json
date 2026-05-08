@@ -1,0 +1,25 @@
+{
+  "name": "biohash-promo",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Remotion explainer video for BioHash.",
+  "scripts": {
+    "dev": "remotion studio",
+    "build": "remotion render BioHashExplainer out/BioHashExplainer.mp4",
+    "render": "remotion render BioHashExplainer out/BioHashExplainer.mp4",
+    "upgrade": "remotion upgrade"
+  },
+  "dependencies": {
+    "@remotion/cli": "^4.0.0",
+    "@remotion/google-fonts": "^4.0.0",
+    "react": "^18.0.0",
+    "react-dom": "^18.0.0",
+    "remotion": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "^18.0.0",
+    "@types/react-dom": "^18.0.0",
+    "@types/web": "^0.0.166",
+    "typescript": "^5.0.0"
+  }
+}
