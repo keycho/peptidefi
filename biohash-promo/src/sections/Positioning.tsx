@@ -63,7 +63,6 @@ export const Positioning: React.FC<{ fontFamily: string }> = ({
               display: "flex",
               flexDirection: "column",
               alignItems: "center",
-              justifyContent: "center",
             }}
           >
             <CornerBrackets size={32} thickness={2} inset={40} />
@@ -82,6 +81,22 @@ export const Positioning: React.FC<{ fontFamily: string }> = ({
             >
               § FIG. 01 · POSITIONING
             </div>
+
+            {/* Centered content area — flex:1 so it expands to fill
+                the space between the absolute corner label and the
+                bottom stats strip; justifyContent:center vertically
+                centers the wordmark/subtitle/quote/peptide list
+                stack inside that area. */}
+            <div
+              style={{
+                flex: 1,
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                justifyContent: "center",
+                width: "100%",
+              }}
+            >
 
             {/* Hero wordmark */}
             <div
@@ -171,7 +186,7 @@ export const Positioning: React.FC<{ fontFamily: string }> = ({
                     {i > 0 && (
                       <span
                         style={{
-                          color: colors.border,
+                          color: colors.ink,
                           opacity: peptideOpacity,
                         }}
                       >
@@ -207,14 +222,16 @@ export const Positioning: React.FC<{ fontFamily: string }> = ({
                 + 19 more
               </span>
             </div>
+            </div>
+            {/* /centered content area */}
 
-            {/* Bottom stats strip */}
+            {/* Bottom stats strip — sits at the natural bottom of
+                the flex column above the container's padding-bottom.
+                No absolute positioning, so it can never overlap the
+                centered content even if peptide list wraps. */}
             <div
               style={{
-                position: "absolute",
-                bottom: 80,
-                left: 80,
-                right: 80,
+                width: "100%",
                 opacity: statStripOpacity,
                 display: "flex",
                 justifyContent: "space-between",

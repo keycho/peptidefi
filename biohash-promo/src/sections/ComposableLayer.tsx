@@ -233,13 +233,15 @@ export const ComposableLayer: React.FC<{ fontFamily: string }> = ({
               })}
             </div>
 
-            {/* Caption */}
+            {/* Caption — flex-flow with marginTop:auto parks it at
+                the bottom of the available space, so it can never
+                overlap the layer stack regardless of how many layers
+                render or whether the stack height changes. */}
             <div
               style={{
-                position: "absolute",
-                bottom: 70,
-                left: 80,
-                right: 80,
+                marginTop: "auto",
+                paddingTop: 24,
+                width: "100%",
                 textAlign: "center",
                 fontSize: 20,
                 color: colors.ink,

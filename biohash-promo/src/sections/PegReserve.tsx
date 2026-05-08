@@ -145,13 +145,12 @@ export const PegReserve: React.FC<{ fontFamily: string }> = ({
               />
             </div>
 
-            {/* Bottom tagline */}
+            {/* Bottom tagline — flex-flow with width:100% sits below
+                the flex:1 stage stack at its natural height. No absolute
+                positioning, so it can never overlap the stage content. */}
             <div
               style={{
-                position: "absolute",
-                bottom: 70,
-                left: 80,
-                right: 80,
+                width: "100%",
                 opacity: taglineOpacity,
                 textAlign: "center",
                 fontSize: 18,

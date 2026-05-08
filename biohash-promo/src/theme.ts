@@ -6,7 +6,14 @@
 export const colors = {
   background: "#FAFAF7",
   ink: "#0F1A2E",
-  muted: "#6B7280",
+  // Historically a 50% grey for "secondary" text. Per the design
+  // brief: hierarchy comes from size/weight, not opacity/lightness,
+  // so all text that previously used `muted` is now full ink. The
+  // name is kept (rather than ripping out every call site) so the
+  // semantic intent — "this is a label / detail / caption" — stays
+  // legible in the source. To bring back lighter secondary text in
+  // the future, change this hex.
+  muted: "#0F1A2E",
   border: "#D1D5DB",
   blue: "#3B82F6",
   blueDark: "#1E40AF",

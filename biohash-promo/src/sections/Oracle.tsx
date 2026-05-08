@@ -77,14 +77,16 @@ export const Oracle: React.FC<{ fontFamily: string }> = ({ fontFamily }) => {
               § FIG. 02 · THE ORACLE
             </div>
 
-            {/* Title */}
+            {/* Title — tightened from fontSize 88 / marginTop 40
+                / marginBottom 40 to free up vertical space for
+                three boxes + two arrows + flex-flow caption. */}
             <div
               style={{
-                fontSize: 88,
+                fontSize: 72,
                 fontWeight: 700,
                 letterSpacing: -3,
                 color: colors.ink,
-                marginTop: 40,
+                marginTop: 16,
                 opacity: titleProgress,
                 transform: `translateY(${interpolate(titleProgress, [0, 1], [20, 0])}px)`,
               }}
@@ -96,8 +98,8 @@ export const Oracle: React.FC<{ fontFamily: string }> = ({ fontFamily }) => {
                 fontSize: 18,
                 letterSpacing: 4,
                 color: colors.muted,
-                marginTop: 16,
-                marginBottom: 40,
+                marginTop: 12,
+                marginBottom: 24,
                 opacity: subtitleOpacity,
                 fontWeight: 500,
               }}
@@ -212,13 +214,15 @@ export const Oracle: React.FC<{ fontFamily: string }> = ({ fontFamily }) => {
               </Box>
             </div>
 
-            {/* Caption */}
+            {/* Caption — flex-flow with marginTop:auto so it parks
+                at the bottom of the available space, NEVER overlaps
+                the third flow box no matter how tall the box content
+                renders. (Was previously absolute-positioned at
+                bottom:70, which collided when vendor chips wrapped.) */}
             <div
               style={{
-                position: "absolute",
-                bottom: 70,
-                left: 80,
-                right: 80,
+                marginTop: "auto",
+                width: "100%",
                 opacity: captionOpacity,
                 textAlign: "center",
                 fontSize: 22,
@@ -262,7 +266,8 @@ const Box: React.FC<{
         width: "100%",
         border: `1px solid ${colors.ink}`,
         backgroundColor: "rgba(255,255,255,0.4)",
-        padding: "20px 32px",
+        // Tightened from "20px 32px" to free up vertical space.
+        padding: "14px 28px",
         position: "relative",
         opacity: enter,
         transform: `translateY(${interpolate(enter, [0, 1], [16, 0])}px)`,
