@@ -60,8 +60,13 @@ export const PegReserve: React.FC<{ fontFamily: string }> = ({
           ),
           reserve: interpolate(
             localFrame,
-            [580, 610, 800, 800],
-            [0, 1, 1, 1],
+            // Reserve is the last stage — fade in and stay. With
+            // extrapolateRight: "clamp" the value plateaus at 1 for
+            // every frame past 610, so no trailing stop is needed.
+            // (Earlier the inputs were [580, 610, 800, 800] which
+            // tripped Remotion's strict-monotonic guard.)
+            [580, 610],
+            [0, 1],
             { extrapolateLeft: "clamp", extrapolateRight: "clamp" },
           ),
         };
