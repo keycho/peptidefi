@@ -1,4 +1,4 @@
-import { AnchorProvider, Program, Wallet, type Idl } from "@coral-xyz/anchor";
+import { AnchorProvider, BN, Program, Wallet, type Idl } from "@coral-xyz/anchor";
 import {
   ComputeBudgetProgram,
   Connection,
@@ -431,8 +431,13 @@ export class PegPusher {
       // fine but the static type isn't aware of `updatePegState`.
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const methods = this.program.methods as any;
+      // u64 must be a bn.js BN — Anchor's borsh encoder calls
+      // `.toArrayLike()` on integer args, which native bigint /
+      // number don't expose. Pass the bigint through `.toString()`
+      // so we don't lose precision via Number coercion.
+      const twapBn = new BN(args.twapValue.toString());
       programIx = await methods
-        .updatePegState(args.twapValue, Array.from(args.observationSetRoot))
+        .updatePegState(twapBn, Array.from(args.observationSetRoot))
         .accounts({
           updateAuthority: this.keypair.publicKey,
           pegState,
