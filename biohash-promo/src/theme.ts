@@ -23,8 +23,12 @@ export const sectionFrames = {
   oracle: { start: 360, end: 960 }, // 12–32s
   pegReserve: { start: 960, end: 1740 }, // 32–58s
   composableLayer: { start: 1740, end: 2340 }, // 58–78s
-  status: { start: 2340, end: 2580 }, // 78–86s
-  cta: { start: 2580, end: 2700 }, // 86–90s
+  // Status extended +80 frames (was 240, now 320) to fit the
+  // screenshot-reveal sub-phase before the 5-stat list. Cta shifts
+  // by the same amount; total composition grows 2700 → 2780 (90s →
+  // 92.7s). Composition.durationInFrames in Root.tsx must match.
+  status: { start: 2340, end: 2660 }, // 78–88.7s
+  cta: { start: 2660, end: 2780 }, // 88.7–92.7s
 } as const;
 
 // Per-section crossfade window (frames). Each section fades in over
