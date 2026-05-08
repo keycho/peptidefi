@@ -1,4 +1,11 @@
-import { AnchorProvider, BN, Program, Wallet, type Idl } from "@coral-xyz/anchor";
+import { AnchorProvider, Program, Wallet, type Idl } from "@coral-xyz/anchor";
+// `BN` is re-exported by @coral-xyz/anchor, but Node's ESM loader
+// can't statically detect the named re-export from anchor's CJS
+// build. (`SyntaxError: does not provide an export named 'BN'` at
+// startup under "type": "module".) Default-importing from bn.js
+// directly works in both ESM and CJS — and it's the same class
+// anchor would have re-exported anyway.
+import BN from "bn.js";
 import {
   ComputeBudgetProgram,
   Connection,
