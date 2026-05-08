@@ -81,7 +81,9 @@ export type SkipReason =
   | "max-step-exceeded"
   | "peg-not-deployed"
   | "zero-twap"
-  | "disabled";
+  | "disabled"
+  | "not-in-allowlist"
+  | "invalid-input";
 
 export interface PushPegStateArgs {
   /**
@@ -134,6 +136,24 @@ export interface PegPusherMetrics {
   last_push_at: string | null;
   last_push_peptide: string | null;
   last_push_signature: string | null;
+  /**
+   * Heartbeat: timestamp of the most recent pushPegState() invocation,
+   * regardless of outcome. Distinguishes "the trigger hasn't fired
+   * since startup" (last_check_attempt_at = null) from "the trigger
+   * is firing but every attempt is being skipped or failing"
+   * (last_check_attempt_at recent, last_push_at stale or null).
+   */
+  last_check_attempt_at: string | null;
+  /** Last peptide code we attempted (any outcome). */
+  last_check_peptide: string | null;
+  /** Last skip reason + when, for diagnosing silent no-ops. */
+  last_skip_reason: SkipReason | null;
+  last_skip_at: string | null;
+  last_skip_peptide: string | null;
+  /** Last failure detail (error message + timestamp + peptide). */
+  last_failure_at: string | null;
+  last_failure_message: string | null;
+  last_failure_peptide: string | null;
 }
 
 interface LastPush {
@@ -254,7 +274,17 @@ export class PegPusher {
     last_push_at: null,
     last_push_peptide: null,
     last_push_signature: null,
+    last_check_attempt_at: null,
+    last_check_peptide: null,
+    last_skip_reason: null,
+    last_skip_at: null,
+    last_skip_peptide: null,
+    last_failure_at: null,
+    last_failure_message: null,
+    last_failure_peptide: null,
   };
+  /** One-shot dedup: log allowlist mismatches once per peptide_code. */
+  private readonly allowlistMissLogged = new Set<string>();
   /** Per-event timestamps used to expire 24h counters lazily. */
   private readonly pushTimestamps: number[] = [];
   private readonly failTimestamps: number[] = [];
@@ -288,6 +318,14 @@ export class PegPusher {
       last_push_at: this.bucket.last_push_at,
       last_push_peptide: this.bucket.last_push_peptide,
       last_push_signature: this.bucket.last_push_signature,
+      last_check_attempt_at: this.bucket.last_check_attempt_at,
+      last_check_peptide: this.bucket.last_check_peptide,
+      last_skip_reason: this.bucket.last_skip_reason,
+      last_skip_at: this.bucket.last_skip_at,
+      last_skip_peptide: this.bucket.last_skip_peptide,
+      last_failure_at: this.bucket.last_failure_at,
+      last_failure_message: this.bucket.last_failure_message,
+      last_failure_peptide: this.bucket.last_failure_peptide,
     };
   }
 
@@ -296,36 +334,59 @@ export class PegPusher {
    * See class-level invariants for skip vs. fail semantics.
    */
   async pushPegState(args: PushPegStateArgs): Promise<PushPegStateResult> {
+    // Heartbeat — record the attempt before any pre-flight gate so
+    // /health can distinguish "trigger hasn't fired" from "trigger
+    // is firing but always skipping". Records even when disabled so
+    // a misconfigured deploy still shows the trigger is reaching the
+    // pusher.
+    const attemptIso = new Date().toISOString();
+    this.bucket.last_check_attempt_at = attemptIso;
+    this.bucket.last_check_peptide = args.peptideCode;
+
     if (!this.cfg.enabled) {
-      return this.recordSkipped("disabled");
+      return this.recordSkipped("disabled", args.peptideCode);
     }
 
+    // Allowlist normalisation — both sides lowercased so env-var case
+    // doesn't matter. Pre-fix this was strict equality, which silently
+    // no-op'd whenever the env var case (or whitespace) didn't exactly
+    // match the DB column. Allowlist misses now go through the
+    // recorded-skip path so /health surfaces them.
     const peptide = args.peptideCode.trim();
-    if (!this.cfg.peptideCodes.has(peptide)) {
-      // Not in the allow-list — silently skip (don't even count;
-      // this peptide isn't part of the pusher's responsibility).
-      return { signature: null, success: false, skipped: null };
+    const peptideKey = peptide.toLowerCase();
+    if (!this.cfg.peptideCodes.has(peptideKey)) {
+      if (!this.allowlistMissLogged.has(peptideKey)) {
+        this.allowlistMissLogged.add(peptideKey);
+        console.warn(
+          `[peg-pusher] peptide="${args.peptideCode}" not in allowlist ` +
+            `[${[...this.cfg.peptideCodes].join(",")}] — skipping (further ` +
+            `mismatches for this code dedup'd until restart). Check ` +
+            `PEG_PEPTIDES env var matches twap_commits.peptide_code exactly ` +
+            `(comparison is case-insensitive but otherwise literal).`,
+        );
+      }
+      return this.recordSkipped("not-in-allowlist", args.peptideCode);
     }
 
     if (args.twapValue <= 0n) {
       console.warn(`[peg-pusher] peptide=${peptide} skipped: twap=0`);
-      return this.recordSkipped("zero-twap");
+      return this.recordSkipped("zero-twap", peptide);
     }
     if (args.observationSetRoot.length !== 32) {
       console.error(
         `[peg-pusher] peptide=${peptide} invalid observation_set_root length ${args.observationSetRoot.length} — skipping`,
       );
-      return this.recordSkipped("zero-twap"); // closest bucket; really an invariant violation
+      return this.recordSkipped("invalid-input", peptide);
     }
 
     // ── rate limit ─────────────────────────────────────────────
-    const last = this.lastPush.get(peptide);
+    const last = this.lastPush.get(peptideKey);
     const now = Date.now();
     if (last && now - last.at < MIN_PUSH_INTERVAL_MS) {
       console.warn(
         `[peg-pusher] peptide=${peptide} skipped: rate-limited (last push ${Math.floor((now - last.at) / 1000)}s ago, min ${MIN_PUSH_INTERVAL_MS / 1000}s)`,
       );
-      return this.recordSkipped("rate-limited");
+      return this.recordSkipped("rate-limited", peptide);
     }
 
     // ── max-step pre-flight ─────────────────────────────────────
@@ -334,7 +395,7 @@ export class PegPusher {
         `[peg-pusher] peptide=${peptide} skipped: would exceed max_twap_step_bps ` +
           `(prev=${last.twapValue} new=${args.twapValue}, cap=${MAX_TWAP_STEP_BPS}bps)`,
       );
-      return this.recordSkipped("max-step-exceeded");
+      return this.recordSkipped("max-step-exceeded", peptide);
     }
 
     // ── staleness pre-flight ───────────────────────────────────
@@ -342,17 +403,18 @@ export class PegPusher {
     try {
       currentSlot = BigInt(await this.connection.getSlot("confirmed"));
     } catch (err) {
+      const msg = errorString(err);
       console.warn(
-        `[peg-pusher] peptide=${peptide} getSlot failed; skipping push: ${errorString(err)}`,
+        `[peg-pusher] peptide=${peptide} getSlot failed; skipping push: ${msg}`,
       );
-      return this.recordFailed();
+      return this.recordFailed(peptide, `getSlot failed: ${msg}`);
     }
     if (currentSlot - args.commitAtSlot > MAX_TWAP_AGE_SLOTS) {
       console.warn(
         `[peg-pusher] peptide=${peptide} skipped: commit-slot ${args.commitAtSlot} ` +
           `is ${currentSlot - args.commitAtSlot} slots behind current ${currentSlot} (max ${MAX_TWAP_AGE_SLOTS})`,
       );
-      return this.recordSkipped("stale-commit-slot");
+      return this.recordSkipped("stale-commit-slot", peptide);
     }
 
     // ── build + send (with retry on retryable errors) ──────────
@@ -378,10 +440,9 @@ export class PegPusher {
         })
         .instruction();
     } catch (err) {
-      console.error(
-        `[peg-pusher] peptide=${peptide} ix build failed: ${errorString(err)}`,
-      );
-      return this.recordFailed();
+      const msg = errorString(err);
+      console.error(`[peg-pusher] peptide=${peptide} ix build failed: ${msg}`);
+      return this.recordFailed(peptide, `ix build failed: ${msg}`);
     }
 
     const totalAttempts = Math.max(1, this.cfg.maxRetries) + 1;
@@ -396,26 +457,26 @@ export class PegPusher {
       });
 
       if (attemptResult.kind === "ok") {
-        this.lastPush.set(peptide, { at: Date.now(), twapValue: args.twapValue });
-        this.missingPegLogged.delete(peptide); // reset dedup if we had previously logged
+        this.lastPush.set(peptideKey, { at: Date.now(), twapValue: args.twapValue });
+        this.missingPegLogged.delete(peptideKey); // reset dedup if we had previously logged
         return this.recordSuccess(peptide, attemptResult.signature);
       }
 
       if (attemptResult.kind === "peg-not-deployed") {
-        if (!this.missingPegLogged.has(peptide)) {
+        if (!this.missingPegLogged.has(peptideKey)) {
           console.warn(
             `[peg-pusher] peptide=${peptide} peg PDA missing (${pegState.toBase58()}); skipping. Will dedup further warns until restart or first successful push.`,
           );
-          this.missingPegLogged.add(peptide);
+          this.missingPegLogged.add(peptideKey);
         }
-        return this.recordSkipped("peg-not-deployed");
+        return this.recordSkipped("peg-not-deployed", peptide);
       }
 
       if (attemptResult.kind === "non-retryable") {
         console.error(
           `[peg-pusher] peptide=${peptide} non-retryable program error: ${attemptResult.error}`,
         );
-        return this.recordFailed();
+        return this.recordFailed(peptide, `non-retryable: ${attemptResult.error}`);
       }
 
       // Retryable — bump fee, try again.
@@ -428,10 +489,16 @@ export class PegPusher {
         console.error(
           `[peg-pusher] peptide=${peptide} retries exhausted (${totalAttempts} attempts): ${attemptResult.error}`,
         );
+        return this.recordFailed(
+          peptide,
+          `retries exhausted (${totalAttempts}): ${attemptResult.error}`,
+        );
       }
     }
 
-    return this.recordFailed();
+    // Unreachable — every loop branch returns. Belt-and-braces in case
+    // a future edit drops a branch.
+    return this.recordFailed(peptide, "unreachable: retry loop fell through");
   }
 
   // ─── Per-attempt machinery ───────────────────────────────────────
@@ -502,13 +569,24 @@ export class PegPusher {
     return { signature, success: true, skipped: null };
   }
 
-  private recordFailed(): PushPegStateResult {
-    this.failTimestamps.push(Date.now());
+  private recordFailed(peptide: string, message: string): PushPegStateResult {
+    const ts = Date.now();
+    this.failTimestamps.push(ts);
+    this.bucket.last_failure_at = new Date(ts).toISOString();
+    this.bucket.last_failure_peptide = peptide;
+    this.bucket.last_failure_message = message;
     return { signature: null, success: false, skipped: null };
   }
 
-  private recordSkipped(reason: SkipReason): PushPegStateResult {
-    this.skipTimestamps.push(Date.now());
+  private recordSkipped(
+    reason: SkipReason,
+    peptide: string,
+  ): PushPegStateResult {
+    const ts = Date.now();
+    this.skipTimestamps.push(ts);
+    this.bucket.last_skip_at = new Date(ts).toISOString();
+    this.bucket.last_skip_reason = reason;
+    this.bucket.last_skip_peptide = peptide;
     return { signature: null, success: false, skipped: reason };
   }
 

@@ -314,14 +314,16 @@ function parsePegPusherConfig(
     );
   }
 
-  // Comma-separated codes; tolerant to whitespace and surrounding
-  // commas. Empty list with enabled=true is allowed (pusher is on
-  // but has nothing to push) — useful for staging the env-var roll-
-  // out before adding the first peptide.
+  // Comma-separated codes; tolerant to whitespace, surrounding
+  // commas, and case. `BPC157`, `bpc157`, ` BPC157 ` all produce the
+  // same allowlist. The pusher lowercases the incoming
+  // twap_commits.peptide_code before comparison. (Pre-fix the match
+  // was case-sensitive, so an env-var case mismatch silently no-op'd
+  // every auto-push and left last_push_at = null forever.)
   const peptideCodes = new Set(
     (env.PEG_PEPTIDES ?? "")
       .split(",")
-      .map((s) => s.trim())
+      .map((s) => s.trim().toLowerCase())
       .filter((s) => s.length > 0),
   );
 

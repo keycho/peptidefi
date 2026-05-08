@@ -332,6 +332,14 @@ function snapshotWithPegMetrics(
       push_count_24h: m.push_count_24h,
       failed_count_24h: m.failed_count_24h,
       skipped_count_24h: m.skipped_count_24h,
+      last_check_attempt_at: m.last_check_attempt_at,
+      last_check_peptide: m.last_check_peptide,
+      last_skip_reason: m.last_skip_reason,
+      last_skip_at: m.last_skip_at,
+      last_skip_peptide: m.last_skip_peptide,
+      last_failure_at: m.last_failure_at,
+      last_failure_message: m.last_failure_message,
+      last_failure_peptide: m.last_failure_peptide,
     },
   };
 }

@@ -81,6 +81,12 @@ export interface OracleHealthState {
    * empty defaults. When enabled=true, push_count_24h /
    * failed_count_24h / skipped_count_24h are 24-hour rolling counters,
    * and last_push_* describe the most recent successful push.
+   *
+   * The `last_check_attempt_at` heartbeat distinguishes "the trigger
+   * hasn't fired since startup" (null) from "the trigger is firing
+   * but every push is being skipped or failing" (recent timestamp,
+   * but last_push_at stale or null). Pair with last_skip_reason /
+   * last_failure_message to diagnose silent no-ops.
    */
   peg_pusher: {
     enabled: boolean;
@@ -91,6 +97,14 @@ export interface OracleHealthState {
     push_count_24h: number;
     failed_count_24h: number;
     skipped_count_24h: number;
+    last_check_attempt_at: string | null;
+    last_check_peptide: string | null;
+    last_skip_reason: string | null;
+    last_skip_at: string | null;
+    last_skip_peptide: string | null;
+    last_failure_at: string | null;
+    last_failure_message: string | null;
+    last_failure_peptide: string | null;
   };
 }
 
@@ -153,6 +167,14 @@ export function buildInitialState(args: {
       push_count_24h: 0,
       failed_count_24h: 0,
       skipped_count_24h: 0,
+      last_check_attempt_at: null,
+      last_check_peptide: null,
+      last_skip_reason: null,
+      last_skip_at: null,
+      last_skip_peptide: null,
+      last_failure_at: null,
+      last_failure_message: null,
+      last_failure_peptide: null,
     },
   };
 }

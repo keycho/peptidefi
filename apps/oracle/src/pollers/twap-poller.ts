@@ -620,29 +620,57 @@ interface PegPushArgs {
 /**
  * Best-effort: invoke the peg pusher after a TWAP commit reaches
  * 'finalized'. Never throws back to the caller; never affects the
- * twap_commits row's lifecycle. Logs locally, increments
- * health.peg_pusher.* counters via the pusher's own metrics(),
- * which the index.ts wiring snapshots into health.
+ * twap_commits row's lifecycle. Logs the outcome of every attempt
+ * (success / skip-reason / failure) so Railway logs make the
+ * trigger's behaviour observable without DB access. The pusher's
+ * own metrics() also surfaces the same outcome via /health.
  */
 async function invokePegPusherBestEffort(
   opts: TwapPollerOptions,
   args: PegPushArgs,
 ): Promise<void> {
   const pusher = opts.pegPusher;
-  if (!pusher) return;
+  if (!pusher) {
+    console.log(
+      `[twap-poller] peg-pusher not configured; skipping invoke for peptide=${args.peptide_code}`,
+    );
+    return;
+  }
+  console.log(
+    `[twap-poller] invoking peg-pusher peptide=${args.peptide_code} ` +
+      `slot=${args.slot} twap=${args.twap_value} root=${args.observation_set_root}`,
+  );
   try {
     const twapValue = parseTwapToBaseUnits(args.twap_value);
     const observationSetRoot = hexToBytes32(args.observation_set_root);
-    await pusher.pushPegState({
+    const result = await pusher.pushPegState({
       peptideCode: args.peptide_code,
       twapValue,
       observationSetRoot,
       commitAtSlot: BigInt(args.slot),
     });
+    if (result.success) {
+      console.log(
+        `[twap-poller] peg-pusher OK peptide=${args.peptide_code} sig=${result.signature}`,
+      );
+    } else if (result.skipped) {
+      console.warn(
+        `[twap-poller] peg-pusher SKIPPED peptide=${args.peptide_code} reason=${result.skipped}`,
+      );
+    } else {
+      console.error(
+        `[twap-poller] peg-pusher FAILED peptide=${args.peptide_code} (see [peg-pusher] log lines above for details)`,
+      );
+    }
   } catch (err) {
+    // pushPegState() catches its own errors and returns a result
+    // object — this catch only fires if the input parsers
+    // (parseTwapToBaseUnits / hexToBytes32) throw on a malformed DB
+    // row. Surface as a hard error so the operator notices.
     const msg = err instanceof Error ? err.message : String(err);
     console.error(
-      `[twap-poller] peg-pusher invocation failed for peptide=${args.peptide_code}: ${msg}`,
+      `[twap-poller] peg-pusher INPUT-PARSE-ERROR peptide=${args.peptide_code}: ${msg} ` +
+        `(twap=${args.twap_value} root=${args.observation_set_root}) — DB row malformed`,
     );
   }
 }
