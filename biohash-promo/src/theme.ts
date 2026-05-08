@@ -15,8 +15,11 @@ export const colors = {
   // the future, change this hex.
   muted: "#0F1A2E",
   border: "#D1D5DB",
-  blue: "#3B82F6",
-  blueDark: "#1E40AF",
+  // Brand accent — deep "blueprint blue" lifted directly from
+  // biohash.network. Reads like architectural ink, not Web2 SaaS.
+  // (Was Tailwind-default #3B82F6 during early scaffolding.)
+  blue: "#0A2A6B",
+  blueDark: "#061A44",
   // Subtle gridline used in the technical-drawing background.
   grid: "#E5E7EB",
   // Used for "on" status dots, success checks.

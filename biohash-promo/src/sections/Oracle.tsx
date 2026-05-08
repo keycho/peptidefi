@@ -3,6 +3,7 @@ import { interpolate, spring, useVideoConfig } from "remotion";
 
 import { CornerBrackets } from "../CornerBrackets";
 import { SectionShell } from "../SectionShell";
+import { fonts } from "../fonts";
 import { colors, sectionFrames, SPRING } from "../theme";
 
 // Vendor chips shown inside Box 1. Prices are illustrative — real
@@ -72,6 +73,7 @@ export const Oracle: React.FC<{ fontFamily: string }> = ({ fontFamily }) => {
                 letterSpacing: 4,
                 color: colors.muted,
                 fontWeight: 500,
+                fontFamily: fonts.display,
               }}
             >
               § FIG. 02 · THE ORACLE
@@ -82,9 +84,10 @@ export const Oracle: React.FC<{ fontFamily: string }> = ({ fontFamily }) => {
                 three boxes + two arrows + flex-flow caption. */}
             <div
               style={{
-                fontSize: 72,
+                fontFamily: fonts.display,
+                fontSize: 80,
                 fontWeight: 700,
-                letterSpacing: -3,
+                letterSpacing: -1,
                 color: colors.ink,
                 marginTop: 16,
                 opacity: titleProgress,
@@ -95,7 +98,8 @@ export const Oracle: React.FC<{ fontFamily: string }> = ({ fontFamily }) => {
             </div>
             <div
               style={{
-                fontSize: 18,
+                fontFamily: fonts.display,
+                fontSize: 20,
                 letterSpacing: 4,
                 color: colors.muted,
                 marginTop: 12,
@@ -158,7 +162,13 @@ export const Oracle: React.FC<{ fontFamily: string }> = ({ fontFamily }) => {
                         }}
                       >
                         {v.name}{" "}
-                        <span style={{ color: colors.blue, marginLeft: 6 }}>
+                        <span
+                          style={{
+                            fontFamily: fonts.mono,
+                            color: colors.blue,
+                            marginLeft: 6,
+                          }}
+                        >
                           {v.price}
                         </span>
                       </div>
@@ -204,7 +214,7 @@ export const Oracle: React.FC<{ fontFamily: string }> = ({ fontFamily }) => {
                   style={{
                     marginTop: 12,
                     fontSize: 14,
-                    fontFamily,
+                    fontFamily: fonts.mono,
                     color: colors.muted,
                     letterSpacing: 1,
                   }}
@@ -276,9 +286,10 @@ const Box: React.FC<{
       <CornerBrackets size={12} thickness={2} inset={-1} />
       <div
         style={{
-          fontSize: 28,
+          fontFamily: fonts.display,
+          fontSize: 32,
           fontWeight: 700,
-          letterSpacing: -0.5,
+          letterSpacing: 0,
           color: colors.ink,
         }}
       >
@@ -289,7 +300,7 @@ const Box: React.FC<{
           fontSize: 16,
           color: colors.muted,
           marginTop: 4,
-          letterSpacing: 1,
+          letterSpacing: 0,
         }}
       >
         {subtitle}
@@ -334,7 +345,8 @@ const Arrow: React.FC<{
       />
       <div
         style={{
-          fontSize: 13,
+          fontFamily: fonts.display,
+          fontSize: 14,
           letterSpacing: 3,
           color: colors.muted,
           fontWeight: 500,

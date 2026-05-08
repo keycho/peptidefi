@@ -1,8 +1,8 @@
 import React from "react";
 import { AbsoluteFill } from "remotion";
-import { loadFont } from "@remotion/google-fonts/JetBrainsMono";
 
 import { colors } from "./theme";
+import { fonts } from "./fonts";
 import { Positioning } from "./sections/Positioning";
 import { Oracle } from "./sections/Oracle";
 import { PegReserve } from "./sections/PegReserve";
@@ -10,14 +10,10 @@ import { ComposableLayer } from "./sections/ComposableLayer";
 import { Status } from "./sections/Status";
 import { Cta } from "./sections/Cta";
 
-// Load JetBrains Mono once at module level. loadFont() returns a
-// fontFamily string that's safe to use across the composition; the
-// font is bundled into the Remotion render and works under
-// `npx remotion render` without external network access at render
-// time.
-const { fontFamily } = loadFont("normal", {
-  weights: ["400", "500", "700"],
-});
+// `fontFamily` prop is the default for each section — Inter (body).
+// Sections override per-element to Barlow Condensed for headings /
+// all-caps labels and JetBrains Mono for technical data (numbers,
+// addresses, codes, URLs). See ./fonts.ts.
 
 export const BioHashExplainer: React.FC = () => {
   // Background fill is a single AbsoluteFill at the root so adjacent
@@ -27,12 +23,12 @@ export const BioHashExplainer: React.FC = () => {
   return (
     <AbsoluteFill style={{ backgroundColor: colors.background }}>
       <BlueprintGrid />
-      <Positioning fontFamily={fontFamily} />
-      <Oracle fontFamily={fontFamily} />
-      <PegReserve fontFamily={fontFamily} />
-      <ComposableLayer fontFamily={fontFamily} />
-      <Status fontFamily={fontFamily} />
-      <Cta fontFamily={fontFamily} />
+      <Positioning fontFamily={fonts.body} />
+      <Oracle fontFamily={fonts.body} />
+      <PegReserve fontFamily={fonts.body} />
+      <ComposableLayer fontFamily={fonts.body} />
+      <Status fontFamily={fonts.body} />
+      <Cta fontFamily={fonts.body} />
     </AbsoluteFill>
   );
 };

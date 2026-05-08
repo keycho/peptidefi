@@ -9,6 +9,7 @@ import {
 
 import { CornerBrackets } from "../CornerBrackets";
 import { SectionShell } from "../SectionShell";
+import { fonts } from "../fonts";
 import { colors, sectionFrames, SPRING } from "../theme";
 
 // Real-UI screenshots loaded from biohash-promo/public/screens/.
@@ -96,6 +97,7 @@ export const Status: React.FC<{ fontFamily: string }> = ({ fontFamily }) => {
                 letterSpacing: 4,
                 color: colors.muted,
                 fontWeight: 500,
+                fontFamily: fonts.display,
               }}
             >
               § FIG. 05 · STATUS
@@ -104,9 +106,10 @@ export const Status: React.FC<{ fontFamily: string }> = ({ fontFamily }) => {
             {/* Title — persists across both phases */}
             <div
               style={{
-                fontSize: 72,
+                fontFamily: fonts.display,
+                fontSize: 80,
                 fontWeight: 700,
-                letterSpacing: -2,
+                letterSpacing: -1,
                 color: colors.ink,
                 marginTop: 24,
                 marginBottom: 32,
@@ -241,7 +244,7 @@ const ScreenshotsPhase: React.FC<{
                 letterSpacing: 2,
                 color: colors.blue,
                 fontWeight: 500,
-                fontFamily,
+                fontFamily: fonts.mono,
               }}
             >
               {shot.caption}
@@ -326,10 +329,11 @@ const StatsPhase: React.FC<{ localFrame: number; fps: number }> = ({
               </div>
               <div
                 style={{
-                  fontSize: 32,
+                  fontFamily: fonts.display,
+                  fontSize: 36,
                   fontWeight: 700,
                   color: colors.ink,
-                  letterSpacing: -0.5,
+                  letterSpacing: 0,
                 }}
               >
                 {stat.label}
@@ -337,6 +341,7 @@ const StatsPhase: React.FC<{ localFrame: number; fps: number }> = ({
               {stat.detail && (
                 <div
                   style={{
+                    fontFamily: fonts.display,
                     fontSize: 22,
                     color: colors.muted,
                     letterSpacing: 2,

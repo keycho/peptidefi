@@ -3,6 +3,7 @@ import { interpolate, spring, useVideoConfig } from "remotion";
 
 import { CornerBrackets } from "../CornerBrackets";
 import { SectionShell } from "../SectionShell";
+import { fonts } from "../fonts";
 import { colors, sectionFrames, SPRING } from "../theme";
 
 // Internal frame timeline (local; 0–120 covers 4s):
@@ -54,9 +55,10 @@ export const Cta: React.FC<{ fontFamily: string }> = ({ fontFamily }) => {
             {/* Hero wordmark — same treatment as Section 1 for bookend feel */}
             <div
               style={{
-                fontSize: 240,
+                fontFamily: fonts.display,
+                fontSize: 260,
                 fontWeight: 700,
-                letterSpacing: -10,
+                letterSpacing: -4,
                 color: colors.ink,
                 lineHeight: 1,
                 opacity: wordmarkProgress,
@@ -70,7 +72,8 @@ export const Cta: React.FC<{ fontFamily: string }> = ({ fontFamily }) => {
             {/* Subtitle */}
             <div
               style={{
-                fontSize: 28,
+                fontFamily: fonts.display,
+                fontSize: 30,
                 letterSpacing: 4,
                 color: colors.muted,
                 marginTop: 32,
@@ -84,6 +87,7 @@ export const Cta: React.FC<{ fontFamily: string }> = ({ fontFamily }) => {
             {/* URL with pulse */}
             <div
               style={{
+                fontFamily: fonts.mono,
                 marginTop: 64,
                 fontSize: 56,
                 fontWeight: 500,

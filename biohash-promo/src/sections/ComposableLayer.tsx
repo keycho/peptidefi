@@ -3,6 +3,7 @@ import { interpolate, spring, useVideoConfig } from "remotion";
 
 import { CornerBrackets } from "../CornerBrackets";
 import { SectionShell } from "../SectionShell";
+import { fonts } from "../fonts";
 import { colors, sectionFrames, SPRING } from "../theme";
 
 // Six-layer stack — each builds on the layers below it. The visual
@@ -101,6 +102,7 @@ export const ComposableLayer: React.FC<{ fontFamily: string }> = ({
                 letterSpacing: 4,
                 color: colors.muted,
                 fontWeight: 500,
+                fontFamily: fonts.display,
               }}
             >
               § FIG. 04 · COMPOSABILITY
@@ -108,9 +110,10 @@ export const ComposableLayer: React.FC<{ fontFamily: string }> = ({
 
             <div
               style={{
-                fontSize: 80,
+                fontFamily: fonts.display,
+                fontSize: 88,
                 fontWeight: 700,
-                letterSpacing: -3,
+                letterSpacing: -1,
                 color: colors.ink,
                 marginTop: 24,
                 opacity: titleProgress,
@@ -199,6 +202,7 @@ export const ComposableLayer: React.FC<{ fontFamily: string }> = ({
                     >
                       <div
                         style={{
+                          fontFamily: fonts.mono,
                           fontSize: 15,
                           letterSpacing: 4,
                           color: colors.muted,
@@ -210,9 +214,10 @@ export const ComposableLayer: React.FC<{ fontFamily: string }> = ({
                       </div>
                       <div
                         style={{
-                          fontSize: 28,
+                          fontFamily: fonts.display,
+                          fontSize: 30,
                           fontWeight: 700,
-                          letterSpacing: -0.5,
+                          letterSpacing: 0,
                           color: colors.ink,
                         }}
                       >
@@ -285,7 +290,8 @@ const StatusBadge: React.FC<{ status: "live" | "shipping" | "next" }> = ({
   return (
     <div
       style={{
-        fontSize: 12,
+        fontFamily: fonts.display,
+        fontSize: 13,
         letterSpacing: 3,
         fontWeight: 700,
         color: styles.color,

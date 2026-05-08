@@ -3,6 +3,7 @@ import { interpolate, spring, useVideoConfig } from "remotion";
 
 import { CornerBrackets } from "../CornerBrackets";
 import { SectionShell } from "../SectionShell";
+import { fonts } from "../fonts";
 import { colors, sectionFrames, SPRING } from "../theme";
 
 const PEPTIDES = [
@@ -77,6 +78,7 @@ export const Positioning: React.FC<{ fontFamily: string }> = ({
                 letterSpacing: 4,
                 color: colors.muted,
                 fontWeight: 500,
+                fontFamily: fonts.display,
               }}
             >
               § FIG. 01 · POSITIONING
@@ -101,9 +103,10 @@ export const Positioning: React.FC<{ fontFamily: string }> = ({
             {/* Hero wordmark */}
             <div
               style={{
-                fontSize: 200,
+                fontFamily: fonts.display,
+                fontSize: 220,
                 fontWeight: 700,
-                letterSpacing: -8,
+                letterSpacing: -4,
                 color: colors.ink,
                 lineHeight: 1,
                 opacity: wordmarkProgress,
@@ -117,7 +120,8 @@ export const Positioning: React.FC<{ fontFamily: string }> = ({
             {/* Subtitle */}
             <div
               style={{
-                fontSize: 24,
+                fontFamily: fonts.display,
+                fontSize: 26,
                 letterSpacing: 6,
                 color: colors.muted,
                 marginTop: 32,
@@ -150,8 +154,9 @@ export const Positioning: React.FC<{ fontFamily: string }> = ({
             {/* Peptide list — each name fades + slides in sequentially */}
             <div
               style={{
+                fontFamily: fonts.mono,
                 marginTop: 64,
-                fontSize: 28,
+                fontSize: 26,
                 letterSpacing: 1,
                 color: colors.ink,
                 fontWeight: 500,
@@ -242,7 +247,8 @@ export const Positioning: React.FC<{ fontFamily: string }> = ({
             >
               <div
                 style={{
-                  fontSize: 18,
+                  fontFamily: fonts.display,
+                  fontSize: 20,
                   letterSpacing: 4,
                   fontWeight: 500,
                   color: colors.ink,
@@ -252,12 +258,13 @@ export const Positioning: React.FC<{ fontFamily: string }> = ({
               </div>
               <div
                 style={{
+                  fontFamily: fonts.mono,
                   fontSize: 12,
                   letterSpacing: 3,
                   color: colors.muted,
                 }}
               >
-                BIOHASH.NETWORK
+                biohash.network
               </div>
             </div>
           </div>

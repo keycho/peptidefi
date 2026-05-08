@@ -3,6 +3,7 @@ import { interpolate, spring, useVideoConfig } from "remotion";
 
 import { CornerBrackets } from "../CornerBrackets";
 import { SectionShell } from "../SectionShell";
+import { fonts } from "../fonts";
 import { colors, sectionFrames, SPRING } from "../theme";
 
 // Internal frame timeline (local; 0–780 covers 26s):
@@ -94,6 +95,7 @@ export const PegReserve: React.FC<{ fontFamily: string }> = ({
                 letterSpacing: 4,
                 color: colors.muted,
                 fontWeight: 500,
+                fontFamily: fonts.display,
               }}
             >
               § FIG. 03 · THE PEG
@@ -101,9 +103,10 @@ export const PegReserve: React.FC<{ fontFamily: string }> = ({
 
             <div
               style={{
-                fontSize: 88,
+                fontFamily: fonts.display,
+                fontSize: 96,
                 fontWeight: 700,
-                letterSpacing: -3,
+                letterSpacing: -1,
                 color: colors.ink,
                 marginTop: 40,
                 opacity: titleProgress,
@@ -115,15 +118,14 @@ export const PegReserve: React.FC<{ fontFamily: string }> = ({
             <div
               style={{
                 fontSize: 22,
-                letterSpacing: 2,
                 color: colors.muted,
                 marginTop: 12,
                 marginBottom: 32,
                 opacity: subtitleOpacity,
-                fontWeight: 500,
+                fontWeight: 400,
               }}
             >
-              <span style={{ color: colors.blue }}>$bBPC157</span> — first peg-backed peptide token
+              <span style={{ color: colors.blue, fontWeight: 500 }}>$bBPC157</span> — first peg-backed peptide token
             </div>
 
             {/* Stage stack (absolute-positioned, each stage controls its own opacity) */}
@@ -150,10 +152,11 @@ export const PegReserve: React.FC<{ fontFamily: string }> = ({
                 positioning, so it can never overlap the stage content. */}
             <div
               style={{
+                fontFamily: fonts.display,
                 width: "100%",
                 opacity: taglineOpacity,
                 textAlign: "center",
-                fontSize: 18,
+                fontSize: 20,
                 letterSpacing: 4,
                 color: colors.ink,
                 fontWeight: 500,
@@ -196,9 +199,10 @@ const NodeBox: React.FC<{
     />
     <div
       style={{
-        fontSize: 22,
+        fontFamily: fonts.display,
+        fontSize: 24,
         fontWeight: 700,
-        letterSpacing: -0.5,
+        letterSpacing: 0,
         color: highlight ? colors.blue : colors.ink,
       }}
     >
@@ -210,7 +214,7 @@ const NodeBox: React.FC<{
           fontSize: 13,
           color: colors.muted,
           marginTop: 4,
-          letterSpacing: 1,
+          letterSpacing: 0,
         }}
       >
         {sub}
@@ -239,7 +243,8 @@ const FlowArrow: React.FC<{
     >
       <div
         style={{
-          fontSize: 13,
+          fontFamily: fonts.display,
+          fontSize: 14,
           letterSpacing: 3,
           color: colors.muted,
           fontWeight: 500,
@@ -316,7 +321,8 @@ const Stage1Mint: React.FC<{
     >
       <div
         style={{
-          fontSize: 16,
+          fontFamily: fonts.display,
+          fontSize: 18,
           letterSpacing: 4,
           fontWeight: 500,
           color: colors.muted,
@@ -394,7 +400,8 @@ const Stage2Burn: React.FC<{
     >
       <div
         style={{
-          fontSize: 16,
+          fontFamily: fonts.display,
+          fontSize: 18,
           letterSpacing: 4,
           fontWeight: 500,
           color: colors.muted,
@@ -479,7 +486,8 @@ const Stage3Reserve: React.FC<{
     >
       <div
         style={{
-          fontSize: 16,
+          fontFamily: fonts.display,
+          fontSize: 18,
           letterSpacing: 4,
           fontWeight: 500,
           color: colors.muted,
@@ -523,7 +531,8 @@ const Stage3Reserve: React.FC<{
               left: 0,
               right: 0,
               textAlign: "center",
-              fontSize: 13,
+              fontFamily: fonts.display,
+              fontSize: 14,
               letterSpacing: 4,
               color: colors.ink,
               fontWeight: 500,
@@ -538,6 +547,7 @@ const Stage3Reserve: React.FC<{
               left: 0,
               right: 0,
               textAlign: "center",
+              fontFamily: fonts.mono,
               fontSize: 22,
               fontWeight: 700,
               color: colors.ink,
