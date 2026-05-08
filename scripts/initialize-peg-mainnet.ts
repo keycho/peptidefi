@@ -55,6 +55,16 @@ import { dirname, isAbsolute, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 
+// NB: `BN` is a re-export from bn.js. It works as a named import here
+// only because the root package.json has no `"type": "module"`, so
+// scripts run as CJS and Node's CJS loader picks up anchor's
+// `exports.BN = ...` without static-export detection getting in the
+// way. If the root ever switches to `"type": "module"` (or this file
+// moves into an ESM workspace), the import will fail at startup with:
+//   SyntaxError: '@coral-xyz/anchor' does not provide an export named 'BN'
+// — same trap the oracle hit on Railway. Fix when that happens:
+// drop BN from this list and add `import BN from "bn.js"` (default).
+// See apps/oracle/src/peg/peg-pusher.ts for the precedent.
 import {
   AnchorProvider,
   BN,
