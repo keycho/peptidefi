@@ -7,7 +7,7 @@ import {
 } from "./health";
 import { createSqlClient, type SqlClient } from "./db/client";
 import { acquireOracleLock, type AdvisoryLockHandle } from "./advisory-lock";
-import { initAnomalyLog, logAnomaly } from "./lib/anomalyLog";
+import { initAnomalyLog, logAnomaly } from "@peptide-oracle/shared";
 import { runCyclePoller } from "./pollers/cycle-poller";
 import { runLongTailPoller } from "./pollers/long-tail-poller";
 import { runTwapPoller } from "./pollers/twap-poller";

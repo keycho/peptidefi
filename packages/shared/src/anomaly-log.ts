@@ -1,35 +1,40 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 /**
- * Append-only operational log helper.
+ * Append-only operational log helper. Writes to the `public.anomalies`
+ * table (migration 0034). The table's RLS contract is "service_role
+ * insert, public read, no update/delete"; this module uses a
+ * service-role Supabase client.
  *
- * Writes to the `public.anomalies` table (see migration 0034). The
- * table's RLS contract is "service_role insert, public read, no
- * update/delete"; this module uses a service-role Supabase client.
+ * Originally lived at apps/oracle/src/lib/anomalyLog.ts. Promoted to
+ * @peptide-oracle/shared so the scraper and worker workspaces can
+ * call logAnomaly() without cross-app imports. Oracle, scraper, and
+ * worker now all import from "@peptide-oracle/shared".
  *
  * Critical invariants this module guarantees:
  *
  *   1. Never throws. Caller can `await logAnomaly(...)` without
- *      try/catch. A network failure, RLS rejection, or schema drift
+ *      try/catch. Network failure, RLS rejection, or schema drift
  *      logs to console and returns `null` — the caller gets nothing
  *      it can break on.
  *
- *   2. Never blocks the pipeline. Inserts go through the supabase-js
- *      client with an explicit per-call timeout (default 5s). A
- *      hung Supabase doesn't stall the oracle's TWAP/cycle commits;
- *      a slow log is preferable to a missing one, but a missing
- *      log is preferable to a stalled commit.
+ *   2. Never blocks the pipeline. Inserts go through supabase-js
+ *      with an explicit per-call timeout (default 5s). A hung
+ *      Supabase doesn't stall the oracle's TWAP/cycle commits or the
+ *      scraper's parallel scrapes; a slow log is preferable to a
+ *      missing one, but a missing log is preferable to a stalled
+ *      pipeline.
  *
  *   3. Singleton init. The first call to `initAnomalyLog(...)` wires
  *      the underlying client; subsequent calls are no-ops. Callers
- *      that haven't seen `initAnomalyLog` (e.g. during a unit-test
- *      run that doesn't bother) hit a fast-path that logs to
- *      console and returns null — same behaviour as a transient
- *      Supabase failure, no surprise.
+ *      that haven't seen `initAnomalyLog` (e.g. unit tests that
+ *      don't bother) hit a fast-path that logs to console and
+ *      returns null — same behaviour as a transient Supabase
+ *      failure, no surprise.
  *
  * Usage pattern:
  *
- *   // At process startup (apps/oracle/src/index.ts):
+ *   // At process startup (apps/oracle/src/index.ts, etc.):
  *   initAnomalyLog({ url, key, service: "oracle" });
  *
  *   // At a notable event:
@@ -69,7 +74,7 @@ export interface AnomalyParams {
   resolvedBy?: number;
 }
 
-export interface InitOptions {
+export interface InitAnomalyLogOptions {
   url: string;
   key: string;
   /** Service name stamped on the `x-peptide-oracle-service` header for tracing. */
@@ -91,7 +96,7 @@ let state: LoggerState | null = null;
  * calls are no-ops (so a stray re-init from a hot reload doesn't
  * leak connections).
  */
-export function initAnomalyLog(options: InitOptions): void {
+export function initAnomalyLog(options: InitAnomalyLogOptions): void {
   if (state) return;
   const client = createClient(options.url, options.key, {
     auth: { persistSession: false, autoRefreshToken: false },
@@ -108,7 +113,7 @@ export function initAnomalyLog(options: InitOptions): void {
 /**
  * Reset state. Test-only — do not call from production code paths.
  */
-export function _resetForTests(): void {
+export function _resetAnomalyLogForTests(): void {
   state = null;
 }
 

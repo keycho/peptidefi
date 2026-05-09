@@ -1,10 +1,44 @@
 import "dotenv/config";
 import {
   type HealthState,
+  initAnomalyLog,
+  logAnomaly,
   sleepInterruptible,
   startHealthServer,
 } from "@peptide-oracle/shared";
 import { runOnce } from "./run";
+
+// Wire the append-only anomaly log before any cycle runs. The
+// scraper hits Supabase for observation writes either way; the env
+// vars are guaranteed present (createAdminClient throws on missing).
+// initAnomalyLog is idempotent so a hot reload doesn't leak clients.
+{
+  const url = process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.SUPABASE_SECRET_KEY;
+  if (url && key) {
+    initAnomalyLog({ url, key, service: "scraper" });
+    // Free signal that the logger is wired and reaching Supabase
+    // on every fresh deploy. Mirrors the oracle's startup event.
+    void logAnomaly({
+      severity: "info",
+      eventType: "scraper_started",
+      description: "scraper process started",
+      context: {
+        node_version: process.version,
+        cycle_interval_ms: Number.parseInt(
+          process.env.SCRAPER_CYCLE_INTERVAL_MS ??
+            process.env.SCRAPE_INTERVAL_MS ??
+            "60000",
+          10,
+        ),
+      },
+    });
+  } else {
+    console.warn(
+      "[startup] SUPABASE_URL or SUPABASE_SECRET_KEY missing; anomaly log disabled (events will console.warn)",
+    );
+  }
+}
 
 /**
  * CLI entry. Two modes:

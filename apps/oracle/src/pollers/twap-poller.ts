@@ -25,7 +25,7 @@ import type { Keypair } from "@solana/web3.js";
 import { buildSignedMemoTx } from "../solana/memo-tx";
 import { buildTwapCommit } from "../twap/memo";
 import type { PegPusher } from "../peg/peg-pusher";
-import { logAnomaly } from "../lib/anomalyLog";
+import { logAnomaly } from "@peptide-oracle/shared";
 
 /**
  * TWAP commit poller — Phase D scope (§3.3).

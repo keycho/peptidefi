@@ -17,7 +17,7 @@ import {
 } from "@solana/web3.js";
 
 import idlJson from "./idl.json" with { type: "json" };
-import { logAnomaly } from "../lib/anomalyLog";
+import { logAnomaly } from "@peptide-oracle/shared";
 
 /**
  * PegPusher — invokes update_peg_state on the BioHash peg program

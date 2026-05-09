@@ -86,6 +86,12 @@ export interface ProductRow {
   id: number;
   supplier_id: number;
   peptide_id: number;
+  /**
+   * Stable peptide code (e.g. "BPC157"). Sourced from the peptides
+   * row at load time; carried alongside `peptide_id` so the anomaly
+   * log can stamp the public-stable code on per-scrape events.
+   */
+  peptide_code: string;
   supplier_code: string;
   supplier_sku: string;
   product_url: string;

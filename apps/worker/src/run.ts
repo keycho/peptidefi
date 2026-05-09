@@ -1,6 +1,7 @@
 import {
   type AdminClient,
   createAdminClient,
+  logAnomaly,
   type Numeric,
 } from "@peptide-oracle/shared";
 import { computeTwap, type TwapInput } from "./twap";
@@ -45,6 +46,36 @@ import { insertPeptideTwap, logOutliers } from "./persist";
 
 /** 30 minutes — three scrape cycles at the current 10-min cadence. */
 const DEFAULT_FRESHNESS_CEILING_MS = 30 * 60 * 1000;
+
+// ─── Anomaly log: vendor_disagreement detection ────────────────────
+//
+// Cross-vendor spread: (max - min) / median. When > 10% the cohort
+// disagrees enough that the TWAP could swing materially based on
+// which vendor reported. Worth surfacing.
+//
+// Suppression: a real disagreement (e.g. one vendor stuck at last
+// week's price) can persist for hours. Logging every minute would
+// drown the feed. Per-peptide state remembers the last fire time;
+// suppressed cycles are silently counted and surfaced in the next
+// fire's `cycles_with_disagreement` so the operator sees how long
+// it's been ongoing.
+const VENDOR_DISAGREEMENT_THRESHOLD = 0.10; // 10%
+const VENDOR_DISAGREEMENT_SUPPRESS_MS = 60 * 60 * 1000; // 1 h
+
+interface DisagreementState {
+  lastFiredAtMs: number;
+  /** Cycles that crossed the threshold while suppressed. Reset on fire. */
+  suppressedCount: number;
+  /** Anomaly id of the most-recent fire — informational only. */
+  lastAnomalyId: number | null;
+}
+
+const peptideDisagreementState = new Map<number, DisagreementState>();
+
+/** Test-only — clear cross-cycle disagreement state between unit tests. */
+export function _resetDisagreementStateForTests(): void {
+  peptideDisagreementState.clear();
+}
 
 export interface CycleSummary {
   peptidesProcessed: number;
@@ -141,6 +172,74 @@ export async function runOnce(): Promise<CycleSummary> {
           medianValue: result.twap,
           dropped: result.dropped,
         });
+        // ── Anomaly log: dormant for v1 ──────────────────────────
+        // computeTwap() always returns dropped=[] under the v1
+        // straight-median algorithm, so this loop never runs today.
+        // It's wired NOW so that when v2 turns on outlier filtering
+        // (likely MAD-based per the twap.ts header comment), the
+        // anomaly events fire automatically with no extra code
+        // change. One event per excluded observation.
+        for (const drop of result.dropped) {
+          void logAnomaly({
+            severity: "warn",
+            eventType: "price_outlier_excluded",
+            description: `${peptide.code}: dropped supplier ${drop.supplierId} price ${drop.priceUsdPerMg} from TWAP`,
+            vendorId: String(drop.supplierId),
+            peptideId: peptide.code,
+            observationId: drop.observationId,
+            context: {
+              observed_price: drop.priceUsdPerMg,
+              twap_median: result.twap,
+              median_deviation_bps: result.medianDeviationBps,
+              kept_supplier_count: result.kept.length,
+            },
+          });
+        }
+      }
+
+      // ── Anomaly log: vendor_disagreement (cross-vendor spread) ─
+      // Compute on the kept set (same data the median saw). >=2
+      // suppliers are required for a meaningful spread; computeTwap
+      // already gates that as `kind === 'computed'`.
+      const detection = detectDisagreement(result.kept);
+      if (detection.exceedsThreshold) {
+        const state = peptideDisagreementState.get(peptide.id) ?? {
+          lastFiredAtMs: 0,
+          suppressedCount: 0,
+          lastAnomalyId: null,
+        };
+        const now = Date.now();
+        const sinceLastFireMs = now - state.lastFiredAtMs;
+        if (sinceLastFireMs >= VENDOR_DISAGREEMENT_SUPPRESS_MS) {
+          // Fire — initial detection or first re-fire after the 1h
+          // suppression window expires.
+          const filed = await logAnomaly({
+            severity: "warn",
+            eventType: "vendor_disagreement",
+            description: `${peptide.code}: vendor spread ${(detection.spreadPct * 100).toFixed(1)}% exceeds ${(VENDOR_DISAGREEMENT_THRESHOLD * 100).toFixed(0)}% threshold`,
+            peptideId: peptide.code,
+            context: {
+              vendor_prices: detection.vendorPrices,
+              min_price: detection.minPrice,
+              max_price: detection.maxPrice,
+              median_price: result.twap,
+              spread_pct: detection.spreadPct,
+              cycles_with_disagreement: state.suppressedCount + 1,
+            },
+          });
+          peptideDisagreementState.set(peptide.id, {
+            lastFiredAtMs: now,
+            suppressedCount: 0,
+            lastAnomalyId: filed?.id ?? null,
+          });
+        } else {
+          // Within the suppression window — count silently so the
+          // next fire surfaces "this has been ongoing for N cycles".
+          peptideDisagreementState.set(peptide.id, {
+            ...state,
+            suppressedCount: state.suppressedCount + 1,
+          });
+        }
       }
     }
 
@@ -162,6 +261,58 @@ interface PeptideRow {
   id: number;
   code: string;
 }
+
+interface DisagreementDetection {
+  exceedsThreshold: boolean;
+  spreadPct: number;
+  minPrice: string;
+  maxPrice: string;
+  /** supplierId → priceUsdPerMg (string). */
+  vendorPrices: Record<string, string>;
+}
+
+/**
+ * Pure: compute (max-min)/median spread across the kept observations
+ * and decide whether it crosses VENDOR_DISAGREEMENT_THRESHOLD.
+ * Reference is the median of the same set, computed locally as a
+ * BigNumber-free midpoint to avoid pulling another dependency in
+ * here. With ≤ 8 active vendors this is cheap.
+ */
+function detectDisagreement(kept: TwapInput[]): DisagreementDetection {
+  if (kept.length < 2) {
+    return {
+      exceedsThreshold: false,
+      spreadPct: 0,
+      minPrice: "0",
+      maxPrice: "0",
+      vendorPrices: {},
+    };
+  }
+  const numericPrices = kept.map((o) => Number(o.priceUsdPerMg));
+  const min = Math.min(...numericPrices);
+  const max = Math.max(...numericPrices);
+  const sorted = [...numericPrices].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  const median =
+    sorted.length % 2 === 0
+      ? (sorted[mid - 1]! + sorted[mid]!) / 2
+      : sorted[mid]!;
+  const spreadPct = median > 0 ? (max - min) / median : 0;
+  const vendorPrices: Record<string, string> = {};
+  for (const o of kept) {
+    vendorPrices[String(o.supplierId)] = String(o.priceUsdPerMg);
+  }
+  return {
+    exceedsThreshold: spreadPct > VENDOR_DISAGREEMENT_THRESHOLD,
+    spreadPct,
+    minPrice: String(min),
+    maxPrice: String(max),
+    vendorPrices,
+  };
+}
+
+/** Test-only — exposed so unit tests can pin the spread math. */
+export const _internal = { detectDisagreement, VENDOR_DISAGREEMENT_THRESHOLD };
 
 async function loadActivePeptides(supabase: AdminClient): Promise<PeptideRow[]> {
   const { data, error } = await supabase
