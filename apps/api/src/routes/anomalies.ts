@@ -238,17 +238,32 @@ function emptyCounts(): SeverityCounts {
 async function severityCountsSince(
   supabase: ReturnType<typeof adminClientUntyped>,
   sinceIso: string | null,
-): Promise<SeverityCounts | { error: string }> {
+): Promise<SeverityCounts> {
   // PostgREST has no GROUP BY surface in the JS client; we use a
   // single SELECT and bucket in-memory. The page size is bounded —
   // even at 1k events/day the all-time table is small (the log is
   // intentionally low-volume; it's notable events only).
+  //
+  // Throws on DB failure rather than returning an `{ error }` union.
+  // The previous shape collided with SeverityCounts.error (the count
+  // of severity='error' events) — `"error" in r` matched both
+  // branches, so a healthy zero-error window was misread as a query
+  // failure and the handler returned `"stats query failed: 0"`.
   let query = supabase.from("anomalies").select("severity");
   if (sinceIso) {
     query = query.gte("occurred_at", sinceIso);
   }
   const { data, error } = await query;
-  if (error) return { error: error.message };
+  if (error) {
+    // Surface the full PostgREST error shape via the thrown
+    // Error.cause so the handler can log it and the response can
+    // include the actual message. PostgREST errors carry .message,
+    // .code, .details, .hint — none of which we want to lose.
+    const message = error.message || JSON.stringify(error);
+    throw new Error(`severityCountsSince query failed: ${message}`, {
+      cause: error,
+    });
+  }
   const counts = emptyCounts();
   for (const row of (data ?? []) as Array<{ severity: Severity }>) {
     if (SEVERITIES.includes(row.severity)) {
@@ -274,23 +289,44 @@ export async function statsAnomaliesHandler(
   const since24h = new Date(now - 24 * 60 * 60 * 1000).toISOString();
   const since7d = new Date(now - 7 * 24 * 60 * 60 * 1000).toISOString();
 
-  const [last24h, last7d, allTime] = await Promise.all([
-    severityCountsSince(supabase, since24h),
-    severityCountsSince(supabase, since7d),
-    severityCountsSince(supabase, null),
-  ]);
-
-  for (const r of [last24h, last7d, allTime]) {
-    if ("error" in r) {
-      sendError(res, 500, "DB_ERROR", `stats query failed: ${r.error}`);
-      return;
-    }
+  let last24h: SeverityCounts;
+  let last7d: SeverityCounts;
+  let allTime: SeverityCounts;
+  try {
+    [last24h, last7d, allTime] = await Promise.all([
+      severityCountsSince(supabase, since24h),
+      severityCountsSince(supabase, since7d),
+      severityCountsSince(supabase, null),
+    ]);
+  } catch (err) {
+    // Log the FULL error to the server console — message, stack,
+    // cause (the original PostgREST error object). Without the
+    // stack we lost a day debugging a "stats query failed: 0"
+    // misroute.
+    const e = err instanceof Error ? err : new Error(String(err));
+    console.error("[anomalies/stats] query failed:", {
+      message: e.message,
+      stack: e.stack,
+      cause: e.cause,
+    });
+    const causeMsg =
+      e.cause && typeof e.cause === "object" && "message" in e.cause
+        ? String((e.cause as { message: unknown }).message)
+        : null;
+    sendError(
+      res,
+      500,
+      "DB_ERROR",
+      `stats query failed: ${e.message}`,
+      causeMsg ? { cause: causeMsg } : undefined,
+    );
+    return;
   }
 
   const body: StatsBody = {
-    last_24h: last24h as SeverityCounts,
-    last_7d: last7d as SeverityCounts,
-    all_time: allTime as SeverityCounts,
+    last_24h: last24h,
+    last_7d: last7d,
+    all_time: allTime,
     generated_at: new Date(now).toISOString(),
   };
   statsCache = { body, expiresAt: now + STATS_TTL_MS };
