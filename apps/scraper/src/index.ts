@@ -7,6 +7,7 @@ import {
   startHealthServer,
 } from "@peptide-oracle/shared";
 import { runOnce } from "./run";
+import { getProxyDiagnostics } from "./suppliers/woocommerce";
 
 // Wire the append-only anomaly log before any cycle runs. The
 // scraper hits Supabase for observation writes either way; the env
@@ -31,6 +32,42 @@ import { runOnce } from "./run";
             "60000",
           10,
         ),
+      },
+    });
+
+    // ── proxy_state_at_startup ────────────────────────────────
+    // One-shot snapshot of what the proxy config evaluator
+    // ACTUALLY decided. Surfaces hidden-whitespace foot-guns
+    // (raw_use_proxy_json shows the JSON escape of the env value,
+    // including \n / \r / NBSP) without leaking the API key
+    // (api_key_fingerprint is `${length}:${first4}…${last4}`).
+    //
+    // After this lands, "is the proxy enabled in production?" is
+    // a one-query answer:
+    //   /api/anomalies?event_type=proxy_state_at_startup&limit=1
+    //
+    // No more Railway-log spelunking required.
+    const diag = getProxyDiagnostics();
+    void logAnomaly({
+      severity: "info",
+      eventType: "proxy_state_at_startup",
+      description: `scraper proxy: enabled=${diag.proxy_enabled} has_api_key=${diag.has_api_key}`,
+      context: {
+        ...diag,
+        // List of WC-via-proxy vendors. Hardcoded here (rather than
+        // imported from suppliers/index) to avoid a circular import
+        // at startup; matches the 7 createWooModule() entries.
+        // CAYMAN is omitted (paused, doesn't use the proxy path).
+        vendors_via_proxy: [
+          "PUREHEALTH",
+          "NUSCIENCE",
+          "VERIFIED",
+          "LIBERTY",
+          "GENETIC",
+          "PULSE",
+          "PURERAWZ",
+          "SWISSCHEMS",
+        ],
       },
     });
   } else {
