@@ -121,9 +121,13 @@ export function getProxyCreditsUsed(): number {
 }
 
 function readProxyConfig(): ProxyConfig | null {
-  const flag = (process.env.SCRAPER_USE_PROXY ?? "false").toLowerCase();
+  // Trim before parsing so a stray trailing newline / leading space
+  // from the Railway dashboard (which doesn't render whitespace) can't
+  // silently kick us into direct-fetch mode. Lowercase comparison
+  // accepts "true"/"True"/"TRUE"/"1" — anything else is "off".
+  const flag = (process.env.SCRAPER_USE_PROXY ?? "").trim().toLowerCase();
   if (flag !== "true" && flag !== "1") return null;
-  const apiKey = process.env.SCRAPINGANT_API_KEY;
+  const apiKey = (process.env.SCRAPINGANT_API_KEY ?? "").trim();
   if (!apiKey) {
     // Only warn once per process. Cheap dedupe via a module-scoped flag.
     if (!warnedAboutMissingKey) {
@@ -137,6 +141,55 @@ function readProxyConfig(): ProxyConfig | null {
   return { apiKey };
 }
 let warnedAboutMissingKey = false;
+
+/**
+ * One-shot diagnostic snapshot for the startup anomaly event. Captures
+ * what `readProxyConfig` will actually decide at runtime, plus enough
+ * metadata to spot the common foot-guns (hidden whitespace, key never
+ * set, key present but empty after trim).
+ *
+ * Sensitive fields are fingerprinted, never logged in full:
+ *   - `raw_use_proxy_json` is JSON.stringify of the raw env value, which
+ *     surfaces hidden chars (\n, \r, NBSP) via JSON's escape sequences.
+ *     The string itself is short and not secret.
+ *   - `api_key_fingerprint` is `${len}:${first4}…${last4}`. Lets ops
+ *     confirm the SAME key is set across deploys without dumping it
+ *     to the public anomaly feed.
+ */
+export interface ProxyDiagnostics {
+  /** What readProxyConfig() will actually return: true if we'll use proxy. */
+  proxy_enabled: boolean;
+  /** True iff SCRAPINGANT_API_KEY is set and non-empty after trim. */
+  has_api_key: boolean;
+  /** Raw SCRAPER_USE_PROXY env value, JSON-encoded so hidden chars are visible. null if unset. */
+  raw_use_proxy_json: string | null;
+  /** Length of the raw SCRAPER_USE_PROXY env value before trim. null if unset. */
+  raw_use_proxy_length: number | null;
+  /** Length of SCRAPINGANT_API_KEY before trim. null if unset. */
+  api_key_length: number | null;
+  /** "{length}:{first4}…{last4}" — non-secret key identity for cross-deploy comparison. null if unset. */
+  api_key_fingerprint: string | null;
+}
+
+export function getProxyDiagnostics(): ProxyDiagnostics {
+  const rawUseProxy = process.env.SCRAPER_USE_PROXY ?? null;
+  const flag = (rawUseProxy ?? "").trim().toLowerCase();
+  const flagOn = flag === "true" || flag === "1";
+  const rawApiKey = process.env.SCRAPINGANT_API_KEY ?? null;
+  const apiKey = (rawApiKey ?? "").trim();
+  const proxy_enabled = flagOn && apiKey.length > 0;
+  return {
+    proxy_enabled,
+    has_api_key: apiKey.length > 0,
+    raw_use_proxy_json: rawUseProxy === null ? null : JSON.stringify(rawUseProxy),
+    raw_use_proxy_length: rawUseProxy === null ? null : rawUseProxy.length,
+    api_key_length: rawApiKey === null ? null : rawApiKey.length,
+    api_key_fingerprint:
+      apiKey.length > 0
+        ? `${apiKey.length}:${apiKey.slice(0, 4)}…${apiKey.slice(-4)}`
+        : null,
+  };
+}
 
 /**
  * Single fetch entry point — proxy-aware. timeoutMs is applied to the
