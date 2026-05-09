@@ -25,6 +25,7 @@ import type { Keypair } from "@solana/web3.js";
 import { buildSignedMemoTx } from "../solana/memo-tx";
 import { buildTwapCommit } from "../twap/memo";
 import type { PegPusher } from "../peg/peg-pusher";
+import { logAnomaly } from "../lib/anomalyLog";
 
 /**
  * TWAP commit poller — Phase D scope (§3.3).
@@ -574,6 +575,21 @@ async function handlePostSubmitFailure(
       0,
       opts.health.twap.in_flight_count - 1,
     );
+    void logAnomaly({
+      severity:
+        args.lastErrorClass === "INSUFFICIENT_SOL" ? "critical" : "error",
+      eventType: "oracle_commit_failed",
+      description: `TWAP commit terminally failed (${args.lastErrorClass}) for ${args.peptide_code}: ${args.lastErrorMessage}`,
+      peptideId: args.peptide_code,
+      context: {
+        component: "twap-poller",
+        twap_commit_id: args.id,
+        error_class: args.lastErrorClass,
+        error_message: args.lastErrorMessage,
+        orphan_signature: args.orphanedSignature,
+        retry_count: args.retry_count + 1,
+      },
+    });
     return;
   }
 
@@ -591,6 +607,21 @@ async function handlePostSubmitFailure(
       `[twap-poller] id=${args.id} (peptide=${args.peptide_code}) retry ` +
         `budget exhausted; failed`,
     );
+    void logAnomaly({
+      severity: "error",
+      eventType: "oracle_commit_failed",
+      description: `TWAP commit retry budget exhausted for ${args.peptide_code} (${IN_FLIGHT_MAX_RETRIES} attempts): ${args.lastErrorClass}`,
+      peptideId: args.peptide_code,
+      context: {
+        component: "twap-poller",
+        twap_commit_id: args.id,
+        error_class: args.lastErrorClass,
+        error_message: args.lastErrorMessage,
+        orphan_signature: args.orphanedSignature,
+        retry_count: args.retry_count + 1,
+        retry_budget: IN_FLIGHT_MAX_RETRIES,
+      },
+    });
     return;
   }
 

@@ -1,5 +1,7 @@
 import type { ReservedSql, Sql } from "postgres";
 
+import { logAnomaly } from "./lib/anomalyLog";
+
 /**
  * Postgres advisory-lock single-instance enforcement per §3.8.1.
  *
@@ -106,6 +108,11 @@ export async function acquireOracleLock(
 
   const startedAt = Date.now();
   let attempt = 0;
+  // Anomaly-log linkage: when we hit our first retry we file a
+  // 'peg_pusher_lock_stuck' event. If we eventually succeed, we
+  // file a 'peg_pusher_lock_released' event with resolved_by =
+  // stuckAnomalyId so the public log shows the resolved arc.
+  let stuckAnomalyId: number | null = null;
 
   while (true) {
     attempt += 1;
@@ -124,6 +131,20 @@ export async function acquireOracleLock(
     }
 
     if (acquired) {
+      // If we filed a stuck event earlier in this acquisition path,
+      // close the loop with a released event referencing it.
+      if (stuckAnomalyId !== null) {
+        void logAnomaly({
+          severity: "info",
+          eventType: "peg_pusher_lock_released",
+          description: `advisory lock acquired after ${attempt} attempts (~${Math.round((Date.now() - startedAt) / 1000)}s)`,
+          context: {
+            attempts: attempt,
+            elapsed_ms: Date.now() - startedAt,
+          },
+          resolvedBy: stuckAnomalyId,
+        });
+      }
       return {
         connection,
         release: async () => {
@@ -148,8 +169,40 @@ export async function acquireOracleLock(
     // pg_try_advisory_lock returned false — another session holds it.
     const elapsedMs = Date.now() - startedAt;
     const remainingMs = maxWaitMs - elapsedMs;
+
+    // First time we observe contention, file a stuck event. Severity
+    // 'warn' because retry might still succeed; the hard-fail below
+    // upgrades to 'critical' if the budget runs out.
+    if (stuckAnomalyId === null) {
+      const filed = await logAnomaly({
+        severity: "warn",
+        eventType: "peg_pusher_lock_stuck",
+        description: `advisory lock contended on attempt ${attempt}; retrying`,
+        context: {
+          attempt,
+          interval_ms: intervalMs,
+          max_wait_ms: maxWaitMs,
+          elapsed_ms: elapsedMs,
+        },
+      });
+      stuckAnomalyId = filed?.id ?? null;
+    }
+
     if (remainingMs <= 0) {
-      // Out of retry budget. Hard-fail.
+      // Out of retry budget. Hard-fail. Upgrade the prior 'warn' to
+      // a 'critical' so the public log makes the operator-action
+      // signal unambiguous (this is the §08.5.7 ghost-lock case).
+      void logAnomaly({
+        severity: "critical",
+        eventType: "peg_pusher_lock_stuck",
+        description: `advisory lock unrecoverable after ${attempt} attempts over ~${Math.round(elapsedMs / 1000)}s — manual ghost-lock recovery required`,
+        context: {
+          attempts: attempt,
+          elapsed_ms: elapsedMs,
+          recovery_doc: "§08.5.7",
+        },
+        resolvedBy: stuckAnomalyId ?? undefined,
+      });
       await connection.release();
       throw new Error(
         `advisory-lock: another oracle instance appears to be running ` +

@@ -1,6 +1,7 @@
 import "dotenv/config";
 import express from "express";
 import cors from "cors";
+import rateLimit from "express-rate-limit";
 import { corsOptions } from "./cors-config";
 import { vendorLeaderboardHandler } from "./routes/vendors";
 import { arbitrageHandler } from "./routes/arbitrage";
@@ -15,6 +16,13 @@ import { getObservationHandler } from "./routes/v1/observations";
 import { getTwapHandler } from "./routes/v1/twaps";
 import { getPeptideVendorPricesHandler } from "./routes/v1/vendor-prices";
 import { verifyObservationHandler } from "./routes/v1/verify";
+import {
+  getAnomalyHandler,
+  jsonFeedAnomaliesHandler,
+  listAnomaliesHandler,
+  rssFeedAnomaliesHandler,
+  statsAnomaliesHandler,
+} from "./routes/anomalies";
 
 /**
  * peptide-oracle API — Express server.
@@ -137,6 +145,25 @@ function buildApp(): express.Express {
   app.get("/v1/observations/:id", asyncRoute(getObservationHandler));
   app.get("/v1/twaps/:id", asyncRoute(getTwapHandler));
   app.get("/v1/verify/observation/:id", asyncRoute(verifyObservationHandler));
+
+  // ─── /api/anomalies — public append-only operational log ──────────
+  // Rate-limited per-IP because this endpoint is intentionally public
+  // (no auth) and the stats / feed paths could be hit aggressively
+  // by a poorly-written client. 60 req/min/IP per spec; well above
+  // any reasonable Lovable polling cadence.
+  const anomalyLimiter = rateLimit({
+    windowMs: 60_000,
+    limit: 60,
+    standardHeaders: "draft-7",
+    legacyHeaders: false,
+    message: { code: "RATE_LIMITED", message: "60 req/min/IP exceeded" },
+  });
+  app.use("/api/anomalies", anomalyLimiter);
+  app.get("/api/anomalies", asyncRoute(listAnomaliesHandler));
+  app.get("/api/anomalies/feed.xml", asyncRoute(rssFeedAnomaliesHandler));
+  app.get("/api/anomalies/feed.json", asyncRoute(jsonFeedAnomaliesHandler));
+  app.get("/api/anomalies/stats", asyncRoute(statsAnomaliesHandler));
+  app.get("/api/anomalies/:id", asyncRoute(getAnomalyHandler));
 
   app.use((_req, res) => {
     res.status(404).json({ code: "NOT_FOUND", message: "no such route" });
