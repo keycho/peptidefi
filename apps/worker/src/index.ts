@@ -1,10 +1,32 @@
 import "dotenv/config";
 import {
   type HealthState,
+  initAnomalyLog,
+  logAnomaly,
   sleepInterruptible,
   startHealthServer,
 } from "@peptide-oracle/shared";
 import { runOnce } from "./run";
+
+// Wire the append-only anomaly log before any cycle runs.
+// initAnomalyLog is idempotent so a hot reload doesn't leak clients.
+{
+  const url = process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.SUPABASE_SECRET_KEY;
+  if (url && key) {
+    initAnomalyLog({ url, key, service: "worker" });
+    void logAnomaly({
+      severity: "info",
+      eventType: "worker_started",
+      description: "worker process started",
+      context: { node_version: process.version },
+    });
+  } else {
+    console.warn(
+      "[startup] SUPABASE_URL or SUPABASE_SECRET_KEY missing; anomaly log disabled (events will console.warn)",
+    );
+  }
+}
 
 /**
  * CLI entry. Two modes:

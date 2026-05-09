@@ -14,6 +14,7 @@ export * from "./fx";
 export * from "./supabase-admin";
 export * from "./scraper-types";
 export * from "./health";
+export * from "./anomaly-log";
 
 // On-chain commit primitives — canonical observation form (§02.4.2)
 // + Merkle tree construction (§02.4.5) + proof generation /

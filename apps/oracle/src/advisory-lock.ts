@@ -1,6 +1,6 @@
 import type { ReservedSql, Sql } from "postgres";
 
-import { logAnomaly } from "./lib/anomalyLog";
+import { logAnomaly } from "@peptide-oracle/shared";
 
 /**
  * Postgres advisory-lock single-instance enforcement per §3.8.1.

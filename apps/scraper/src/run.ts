@@ -3,6 +3,7 @@ import {
   type FxRates,
   createAdminClient,
   fetchFxRates,
+  logAnomaly,
   scrapeResultSchema,
   type ScrapeResult,
 } from "@peptide-oracle/shared";
@@ -31,6 +32,53 @@ import { getProxyCreditsUsed } from "./suppliers/woocommerce";
  * Returns the run id and aggregate counters so the caller (CLI loop or
  * --once mode) can log a tidy summary line.
  */
+
+// ─── Anomaly-log: per-vendor offline tracking ──────────────────────
+//
+// Module-scoped so state persists across cycles within the same
+// process. A vendor is "failed this cycle" iff EVERY product attempt
+// for that vendor in this cycle failed. After
+// `VENDOR_OFFLINE_THRESHOLD` consecutive failed cycles we file a
+// vendor_offline anomaly and remember its id; on the next successful
+// cycle we file a vendor_recovered anomaly with resolvedBy pointing
+// at it. A Railway redeploy resets state, which is fine — the
+// tracker re-learns within `THRESHOLD` cycles.
+const VENDOR_OFFLINE_THRESHOLD = 3;
+
+interface VendorOfflineState {
+  /** Cycles in a row where the vendor had zero successful scrapes. */
+  consecutiveFailedCycles: number;
+  /** Anomalies row id for the vendor_offline event, set when threshold crosses. */
+  offlineAnomalyId: number | null;
+  /** Wall-clock of the last successful scrape for this vendor (for recovery context). */
+  lastSuccessAt: string | null;
+  /** Last error message recorded for the vendor (for offline context). */
+  lastErrorMessage: string | null;
+  /** Wall-clock of the cycle that first crossed the threshold. */
+  offlineSinceMs: number | null;
+}
+
+const vendorOfflineState = new Map<string, VendorOfflineState>();
+
+function getOrInitVendorState(supplierCode: string): VendorOfflineState {
+  let s = vendorOfflineState.get(supplierCode);
+  if (!s) {
+    s = {
+      consecutiveFailedCycles: 0,
+      offlineAnomalyId: null,
+      lastSuccessAt: null,
+      lastErrorMessage: null,
+      offlineSinceMs: null,
+    };
+    vendorOfflineState.set(supplierCode, s);
+  }
+  return s;
+}
+
+/** Test-only — clear cross-cycle vendor state between unit tests. */
+export function _resetVendorOfflineStateForTests(): void {
+  vendorOfflineState.clear();
+}
 export interface CycleSummary {
   runId: number;
   attempted: number;
@@ -103,6 +151,7 @@ export async function runOnce(): Promise<CycleSummary> {
   for (const [supplierCode, supplierProducts] of bySupplier) {
     const mod = getModule(supplierCode);
     let browser: Browser | undefined;
+    let browserLaunchError: string | null = null;
     try {
       if (mod.needsBrowser) {
         browser = await chromium.launch({ headless: true });
@@ -110,6 +159,7 @@ export async function runOnce(): Promise<CycleSummary> {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       errors.push(`${supplierCode}: browser launch failed: ${msg}`);
+      browserLaunchError = msg;
       // Fall through — scrapeOne() will also fail per product and write rows.
     }
 
@@ -131,10 +181,32 @@ export async function runOnce(): Promise<CycleSummary> {
       ),
     );
 
+    let supplierSucceeded = 0;
+    let supplierFailed = 0;
     for (const ok of results) {
-      if (ok) succeeded++;
-      else failed++;
+      if (ok) {
+        succeeded++;
+        supplierSucceeded++;
+      } else {
+        failed++;
+        supplierFailed++;
+      }
     }
+
+    // Vendor-cycle outcome — feeds the offline/recovered tracker.
+    // Sample error: prefer the browser-launch failure if any (it
+    // explains the whole cohort); otherwise fall back to the first
+    // captured per-product error string.
+    void trackVendorCycleOutcome({
+      supplierCode,
+      succeededInCycle: supplierSucceeded,
+      failedInCycle: supplierFailed,
+      cycleStartedAtMs: startedAt,
+      sampleErrorMessage:
+        browserLaunchError ??
+        errors.find((e) => e.startsWith(`${supplierCode}/`)) ??
+        null,
+    });
 
     if (browser) {
       try {
@@ -215,6 +287,7 @@ async function loadActiveProducts(supabase: AdminClient): Promise<ProductRow[]> 
       id: r.id,
       supplier_id: r.supplier_id,
       peptide_id: r.peptide_id,
+      peptide_code: r.peptides.code,
       supplier_code: r.suppliers.code,
       supplier_sku: r.supplier_sku,
       product_url: r.product_url,
@@ -245,6 +318,7 @@ interface ScrapeOneArgs {
 async function scrapeOne(args: ScrapeOneArgs): Promise<boolean> {
   const { supabase, runId, product, mod, browser, fxRates } = args;
   const observedAt = new Date();
+  const startedAtMs = Date.now();
 
   let result: ScrapeResult;
   try {
@@ -308,7 +382,153 @@ async function scrapeOne(args: ScrapeOneArgs): Promise<boolean> {
         currentTier: result.availability_tier,
       });
     }
+  } else {
+    // ── Anomaly log: terminal-failure event ──────────────────────
+    // The supplier module already exhausts its own retries (e.g.
+    // woocommerce.fetchPageWithRetry has 3 attempts) before the
+    // throw lands here, so this IS the terminal failure — single
+    // event per (product, cycle), no per-attempt noise.
+    //
+    // Distinguish parser failures from network/timeout failures
+    // by HTTP status: a 200 response that still flowed through
+    // the failure branch means the parser couldn't extract a
+    // price (selector returned nothing, regex didn't match,
+    // dose normalisation failed). That's a separate event type
+    // because the operational signal is different — a parser
+    // failure usually means a vendor changed their HTML; a
+    // network failure usually means the vendor is flaky.
+    const eventType = classifyScrapeFailureForAnomaly(result);
+    const baseContext = {
+      observation_id: written.id,
+      http_status: result.http_status,
+      error_message: result.scrape_error ?? null,
+      product_url: product.product_url,
+      product_sku: product.supplier_sku,
+      duration_ms: Date.now() - startedAtMs,
+    };
+    if (eventType === "parser_failure") {
+      void logAnomaly({
+        severity: "error",
+        eventType: "parser_failure",
+        description: `${product.supplier_code} returned 200 but parser couldn't extract a price for ${product.peptide_code}`,
+        vendorId: product.supplier_code,
+        peptideId: product.peptide_code,
+        observationId: written.id,
+        context: {
+          ...baseContext,
+          parser_module: product.supplier_code.toLowerCase(),
+        },
+      });
+    } else if (eventType === "scrape_failed") {
+      void logAnomaly({
+        severity: "warn",
+        eventType: "scrape_failed",
+        description: `${product.supplier_code} scrape of ${product.peptide_code} failed after retries: ${(result.scrape_error ?? "unknown").slice(0, 200)}`,
+        vendorId: product.supplier_code,
+        peptideId: product.peptide_code,
+        observationId: written.id,
+        context: baseContext,
+      });
+    }
   }
 
   return result.scrape_success;
+}
+
+/**
+ * Classify a failed scrape result for the anomaly log:
+ *   - http_status === 200  → parser_failure (vendor served HTML, we
+ *                            couldn't extract a price — selector
+ *                            stale, regex broke, dose normalisation
+ *                            blew up).
+ *   - anything else        → scrape_failed (network timeout, 5xx,
+ *                            captcha, retry-exhausted throw).
+ *
+ * Pure: extracted so the unit test can pin the dispatch table
+ * without dragging in supplier modules.
+ */
+export function classifyScrapeFailureForAnomaly(
+  result: Pick<ScrapeResult, "http_status" | "scrape_success">,
+): "parser_failure" | "scrape_failed" | null {
+  if (result.scrape_success) return null;
+  return result.http_status === 200 ? "parser_failure" : "scrape_failed";
+}
+
+// ─── Anomaly log: per-vendor offline / recovered transitions ──────
+//
+// Called once per (vendor, cycle) AFTER all of the vendor's product
+// scrapes have finished. Updates the module-scoped vendorOfflineState
+// counter and fires `vendor_offline` on threshold crossing or
+// `vendor_recovered` on the first success after offline.
+//
+// Exported for unit testing — production code paths only call it
+// from inside runOnce().
+export async function trackVendorCycleOutcome(args: {
+  supplierCode: string;
+  succeededInCycle: number;
+  failedInCycle: number;
+  cycleStartedAtMs: number;
+  /** Sample error message for the offline event's context. */
+  sampleErrorMessage: string | null;
+}): Promise<void> {
+  const state = getOrInitVendorState(args.supplierCode);
+  const cycleHadAnySuccess = args.succeededInCycle > 0;
+
+  if (cycleHadAnySuccess) {
+    const wasOffline = state.offlineAnomalyId !== null;
+    const offlineSinceMs = state.offlineSinceMs;
+    const missedCycles = state.consecutiveFailedCycles;
+    const offlineId = state.offlineAnomalyId;
+    state.consecutiveFailedCycles = 0;
+    state.lastSuccessAt = new Date().toISOString();
+
+    if (wasOffline && offlineId !== null) {
+      // First success after a vendor_offline event — fire the
+      // recovery and clear the offline marker.
+      const offlineDurationMs =
+        offlineSinceMs !== null ? Date.now() - offlineSinceMs : 0;
+      void logAnomaly({
+        severity: "info",
+        eventType: "vendor_recovered",
+        description: `${args.supplierCode} recovered after ${missedCycles} consecutive failed cycles`,
+        vendorId: args.supplierCode,
+        context: {
+          offline_duration_ms: offlineDurationMs,
+          missed_cycles: missedCycles,
+        },
+        resolvedBy: offlineId,
+      });
+      state.offlineAnomalyId = null;
+      state.offlineSinceMs = null;
+    }
+    return;
+  }
+
+  // No successes this cycle — the vendor failed all peptide scrapes.
+  state.consecutiveFailedCycles += 1;
+  if (args.sampleErrorMessage) {
+    state.lastErrorMessage = args.sampleErrorMessage.slice(0, 500);
+  }
+
+  if (
+    state.consecutiveFailedCycles === VENDOR_OFFLINE_THRESHOLD &&
+    state.offlineAnomalyId === null
+  ) {
+    // Crossed the threshold for the first time. Fire once and
+    // remember the id; further failed cycles stay silent until
+    // recovery (no per-cycle re-warn spam).
+    const filed = await logAnomaly({
+      severity: "error",
+      eventType: "vendor_offline",
+      description: `${args.supplierCode} failed ${VENDOR_OFFLINE_THRESHOLD} consecutive cycles — vendor appears offline`,
+      vendorId: args.supplierCode,
+      context: {
+        consecutive_failures: state.consecutiveFailedCycles,
+        last_success_at: state.lastSuccessAt,
+        last_error_message: state.lastErrorMessage,
+      },
+    });
+    state.offlineAnomalyId = filed?.id ?? null;
+    state.offlineSinceMs = Date.now();
+  }
 }

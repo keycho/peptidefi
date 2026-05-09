@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
-  _resetForTests,
+  _resetAnomalyLogForTests as _resetForTests,
   initAnomalyLog,
   logAnomaly,
-} from "../lib/anomalyLog";
+} from "@peptide-oracle/shared";
 
 /**
  * The anomaly logger has two non-negotiable invariants:
