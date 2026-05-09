@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import {
+  logAnomaly,
   parseMassToMg,
   type ScrapeResult,
   type AvailabilityTier,
@@ -86,6 +87,27 @@ function readTotalPagesHeader(res: Response): number {
 }
 
 /**
+ * Dual-source the total product count (x-wp-total) from either
+ * the direct response or the ScrapingAnt-wrapped header. Returns
+ * null when the header is absent. Used to populate the
+ * vendor_catalog_incomplete anomaly context with a "vendor claims
+ * N total but list returned M" signal.
+ */
+function readTotalCountHeader(res: Response): number | null {
+  const direct = res.headers.get("x-wp-total");
+  if (direct) {
+    const n = Number.parseInt(direct, 10);
+    if (Number.isFinite(n) && n >= 0) return n;
+  }
+  const proxied = res.headers.get("ant-original-header-x-wp-total");
+  if (proxied) {
+    const n = Number.parseInt(proxied, 10);
+    if (Number.isFinite(n) && n >= 0) return n;
+  }
+  return null;
+}
+
+/**
  * ScrapingAnt proxy integration.
  *
  * When SCRAPER_USE_PROXY=true and SCRAPINGANT_API_KEY is set, every
@@ -137,6 +159,25 @@ function readProxyConfig(): ProxyConfig | null {
   return { apiKey };
 }
 let warnedAboutMissingKey = false;
+
+/**
+ * Dedup set for vendor_catalog_incomplete anomaly events.
+ *
+ * Keyed by `${supplierCode}:${productId}`. Module-scoped so it
+ * persists across cycles within the same process; resets on
+ * Railway redeploy. The result is one anomaly per affected product
+ * per process lifetime — enough signal for an operator to notice,
+ * not so much that a persistent vendor-side bug spams the feed.
+ *
+ * Test-only reset is exported alongside (see below) so unit tests
+ * can pin the dedup behaviour without leaking state across cases.
+ */
+const incompleteCatalogLogged = new Set<string>();
+
+/** Test-only — clear catalog-incomplete dedup between unit tests. */
+export function _resetIncompleteCatalogDedupForTests(): void {
+  incompleteCatalogLogged.clear();
+}
 
 /**
  * Single fetch entry point — proxy-aware. timeoutMs is applied to the
@@ -313,6 +354,13 @@ function parseProduct(p: WooProduct, cfg: WooConfig): ScrapeResult {
 class WooSupplierModule {
   readonly needsBrowser = false;
   private cache: { fetchedAt: number; byId: Map<number, WooProduct> } | null = null;
+  /**
+   * Most recent `x-wp-total` header value from the catalog list
+   * fetch. Captured for the vendor_catalog_incomplete anomaly
+   * context — lets ops see at a glance "vendor claims 433 but
+   * list returned 100" without re-fetching.
+   */
+  private lastTotalClaimed: number | null = null;
   private inflight: Promise<Map<number, WooProduct>> | null = null;
 
   constructor(private readonly cfg: WooConfig) {}
@@ -334,15 +382,111 @@ class WooSupplierModule {
     }
 
     const product = catalog.get(productId);
-    if (!product) {
+    if (product) {
+      return parseProduct(product, this.cfg);
+    }
+
+    // ── Catalog miss → per-product fallback ─────────────────────
+    //
+    // PURERAWZ (May 2026) ships a broken WC Store API list endpoint:
+    // every page returns the same 100 products despite x-wp-total
+    // saying 433. Some seeded products (HUMANIN, FOLLISTATIN, PT141,
+    // LL37, TA1) are unreachable via the list path even though they
+    // exist, are in stock, and resolve fine on the per-product
+    // endpoint /wp-json/wc/store/v1/products/<id>. Falling back here
+    // turns them from parser_failure events into actual price
+    // observations.
+    //
+    // Other vendors are unaffected — for them the catalog hit rate
+    // is ~100% and this fallback path only runs when a vendor adds
+    // a product we don't yet know about (rare, transient).
+    let recovered: WooProduct | null;
+    try {
+      recovered = await this.fetchOneById(productId);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      // Per-product fetch threw (5xx, network, non-JSON). Parser
+      // was never invoked, so http_status=null routes this to
+      // scrape_failed (network class) not parser_failure.
       return failure(
-        `${this.cfg.supplierCode}: product id ${productId} not in catalog (${catalog.size} products fetched)`,
-        200,
+        `${this.cfg.supplierCode}: id ${productId} not in catalog (${catalog.size} products) and per-product fallback failed: ${msg}`,
+      );
+    }
+    if (!recovered) {
+      // 404 on the per-product endpoint — product genuinely doesn't
+      // exist on the vendor (deleted, unpublished). Surface as 404
+      // so the run.ts classifier sends scrape_failed (network class)
+      // instead of parser_failure (which would falsely blame the
+      // parser).
+      return failure(
+        `${this.cfg.supplierCode}: id ${productId} not in catalog and 404 on per-product fetch`,
+        404,
       );
     }
 
-    return parseProduct(product, this.cfg);
+    // Fallback recovered the product. File the public anomaly so
+    // the operator sees this as a vendor data-quality issue rather
+    // than a scraper bug. Module-scoped dedup: one event per
+    // (vendor, productId) pair per process lifetime — Railway
+    // redeploys naturally re-fire on the next cycle, which is the
+    // right cadence (a once-per-deploy reminder beats per-cycle
+    // spam). Self-heal is silent: when the vendor fixes the list
+    // endpoint, catalog.get() succeeds and this branch never runs.
+    const dedupKey = `${this.cfg.supplierCode}:${productId}`;
+    if (!incompleteCatalogLogged.has(dedupKey)) {
+      incompleteCatalogLogged.add(dedupKey);
+      void logAnomaly({
+        severity: "warn",
+        eventType: "vendor_catalog_incomplete",
+        description: `${this.cfg.supplierCode}: product ${productId} missing from list API but reachable per-id (catalog=${catalog.size}, total claimed=${this.lastTotalClaimed ?? "?"})`,
+        vendorId: this.cfg.supplierCode,
+        context: {
+          product_id: productId,
+          product_name: recovered.name ?? null,
+          catalog_size_returned: catalog.size,
+          catalog_size_claimed: this.lastTotalClaimed,
+          host: this.cfg.host,
+        },
+      });
+    }
+    return parseProduct(recovered, this.cfg);
   };
+
+  /**
+   * Per-product Store API fetch — used as a fallback when the list
+   * endpoint omits a known product (vendor-side bug or pagination
+   * quirk). Same proxy/UA path as the catalog fetch so this works
+   * from datacenter IPs that the list path could already reach.
+   *
+   * Returns null on 404 (product genuinely missing). Throws on any
+   * other transport / parse failure so the caller can surface a
+   * useful error message.
+   */
+  private async fetchOneById(productId: number): Promise<WooProduct | null> {
+    const url = `https://${this.cfg.host}/wp-json/wc/store/v1/products/${productId}`;
+    const res = await proxiedFetch(url, { timeoutMs: FETCH_TIMEOUT_MS });
+    if (res.status === 404) return null;
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status} fetching per-product ${productId}`);
+    }
+    const text = await res.text();
+    let body: unknown;
+    try {
+      body = JSON.parse(text);
+    } catch {
+      throw new Error(
+        `non-JSON per-product body (first 80 chars: ${text.slice(0, 80).replace(/\s+/g, " ")})`,
+      );
+    }
+    if (
+      !body ||
+      typeof body !== "object" ||
+      typeof (body as { id?: unknown }).id !== "number"
+    ) {
+      throw new Error(`unexpected per-product response shape (no numeric id field)`);
+    }
+    return body as WooProduct;
+  }
 
   private async getCatalog(): Promise<Map<number, WooProduct>> {
     if (this.cache && Date.now() - this.cache.fetchedAt < CATALOG_TTL_MS) {
@@ -364,6 +508,7 @@ class WooSupplierModule {
   private async fetchCatalog(): Promise<Map<number, WooProduct>> {
     const map = new Map<number, WooProduct>();
     let page = 1;
+    let totalClaimed: number | null = null;
     while (page <= MAX_PAGES) {
       // NUSCIENCE returns 202 when ?page=1 is set explicitly but 200 when
       // omitted. We send the bare URL on the first request only.
@@ -371,13 +516,15 @@ class WooSupplierModule {
         page === 1
           ? `https://${this.cfg.host}/wp-json/wc/store/v1/products?per_page=${PER_PAGE}`
           : `https://${this.cfg.host}/wp-json/wc/store/v1/products?per_page=${PER_PAGE}&page=${page}`;
-      const { body, totalPages } = await this.fetchPageWithRetry(url);
+      const { body, totalPages, totalCount } = await this.fetchPageWithRetry(url);
+      if (totalCount !== null && totalClaimed === null) totalClaimed = totalCount;
       for (const p of body) {
         if (typeof p.id === "number") map.set(p.id, p);
       }
       if (body.length === 0 || page >= totalPages) break;
       page += 1;
     }
+    this.lastTotalClaimed = totalClaimed;
     return map;
   }
 
@@ -403,7 +550,7 @@ class WooSupplierModule {
    */
   private async fetchPageWithRetry(
     url: string,
-  ): Promise<{ body: WooProduct[]; totalPages: number }> {
+  ): Promise<{ body: WooProduct[]; totalPages: number; totalCount: number | null }> {
     const delays = [0, 3000, 8000];
     let lastErr: unknown = null;
     for (let attempt = 0; attempt < delays.length; attempt++) {
@@ -416,6 +563,7 @@ class WooSupplierModule {
           continue;
         }
         const totalPages = readTotalPagesHeader(res);
+        const totalCount = readTotalCountHeader(res);
         const text = await res.text();
         let body: unknown;
         try {
@@ -434,7 +582,7 @@ class WooSupplierModule {
           );
           continue;
         }
-        return { body: body as WooProduct[], totalPages };
+        return { body: body as WooProduct[], totalPages, totalCount };
       } catch (err) {
         lastErr = err;
         continue;
