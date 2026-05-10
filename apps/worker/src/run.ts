@@ -1,3 +1,4 @@
+import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   type AdminClient,
   createAdminClient,
@@ -120,6 +121,13 @@ export async function runOnce(): Promise<CycleSummary> {
   const oldestAllowed = windowStart;
 
   const peptides = await loadActivePeptides(supabase);
+
+  // Snapshot/diff the TWAP-eligible vendor set BEFORE the per-peptide
+  // loop. Fires `vendor_promoted_to_twap` for any supplier whose
+  // `enabled_in_twap` flipped false→true since the last cycle. First
+  // cycle after a process start warms up the snapshot without firing
+  // (avoids a flood of events on every Railway redeploy).
+  await detectVendorPromotions(supabase);
 
   let withTwap = 0;
   let withThinData = 0;
@@ -337,14 +345,37 @@ async function loadActivePeptides(supabase: AdminClient): Promise<PeptideRow[]> 
  * active suppliers × ~30 minutes of obs = ~30 rows per query worst-case,
  * this stays cheap.
  */
+/**
+ * Load the latest TWAP-eligible observation per (peptide, supplier).
+ *
+ * Two-axis eligibility:
+ *   - suppliers.status = 'active'     — the vendor is being scraped
+ *   - suppliers.enabled_in_twap = true — the vendor's price contributes
+ *     to TWAP cohorts. New vendors land at enabled_in_twap=false (see
+ *     migration 0036) so their data is collected for quality review
+ *     without polluting the on-chain peg. Worker filters BOTH; the
+ *     scraper only filters status. The flip from false → true is
+ *     surfaced by `detectVendorPromotions` below.
+ *
+ * The filter runs in JS rather than as a PostgREST `.eq()` because
+ * we still need the row's supplier metadata for the secondary
+ * dedup-per-supplier pass.
+ */
 async function loadLatestObservationsPerSupplier(
   supabase: AdminClient,
   peptideId: number,
   oldestAllowed: Date,
 ): Promise<TwapInput[]> {
-  const { data, error } = await supabase
+  // Cast to untyped client locally — `enabled_in_twap` lives in the
+  // schema (migration 0036) but isn't in @peptide-oracle/db generated
+  // types yet. Switch back to the typed client once db types are
+  // regenerated post-migration.
+  const sb = supabase as unknown as SupabaseClient;
+  const { data, error } = await sb
     .from("supplier_observations")
-    .select("id, supplier_id, price_usd_per_mg, observed_at, suppliers!inner(status)")
+    .select(
+      "id, supplier_id, price_usd_per_mg, observed_at, suppliers!inner(status, enabled_in_twap)",
+    )
     .eq("peptide_id", peptideId)
     .eq("scrape_success", true)
     .not("price_usd_per_mg", "is", null)
@@ -355,8 +386,19 @@ async function loadLatestObservationsPerSupplier(
 
   const seen = new Set<number>();
   const out: TwapInput[] = [];
-  for (const row of data ?? []) {
+  for (const row of (data ?? []) as unknown as Array<{
+    id: number;
+    supplier_id: number;
+    price_usd_per_mg: string | null;
+    observed_at: string;
+    suppliers: { status: string; enabled_in_twap: boolean | null };
+  }>) {
     if (row.suppliers.status !== "active") continue;
+    // enabled_in_twap defaults true (migration 0036), so existing
+    // vendors continue working unchanged. Explicit !== true so a
+    // null / undefined from a partially-applied schema treats as
+    // "not eligible" — fail closed, not open.
+    if (row.suppliers.enabled_in_twap !== true) continue;
     if (seen.has(row.supplier_id)) continue;
     seen.add(row.supplier_id);
     if (row.price_usd_per_mg === null) continue;
@@ -368,4 +410,108 @@ async function loadLatestObservationsPerSupplier(
     });
   }
   return out;
+}
+
+// ─── Anomaly log: vendor_promoted_to_twap ──────────────────────────
+//
+// Fires when a supplier's enabled_in_twap flag transitions from false
+// to true between worker cycles. The trigger is in-process snapshot
+// diffing — not a DB-level trigger or admin endpoint — because the
+// flip is most often manual (operator UPDATE after 7-day quality
+// review) and we want the operations log to surface the transition
+// regardless of how the flag changes.
+//
+// Semantics:
+//   - First cycle after a process start: the cycle WARMS UP the
+//     snapshot without firing for any of the initially-eligible
+//     vendors. (Otherwise every Railway redeploy would dump 11+
+//     spurious events.)
+//   - Subsequent cycles: any supplier_id present now that wasn't
+//     present last cycle fires `vendor_promoted_to_twap` once. The
+//     same supplier won't re-fire on later cycles because the
+//     snapshot now includes them.
+//   - Demotion (true → false) is silent. The operator already knows;
+//     it's the rare positive transition we want loud.
+//
+// State persists across worker cycles within the same process. A
+// process restart re-warms — same idempotency.
+
+interface PromotionState {
+  warmedUp: boolean;
+  /** supplier_id → code, for the most recent eligible-set snapshot. */
+  eligible: Map<number, string>;
+}
+
+const promotionState: PromotionState = {
+  warmedUp: false,
+  eligible: new Map(),
+};
+
+/** Test-only — reset cross-cycle promotion state between unit tests. */
+export function _resetPromotionStateForTests(): void {
+  promotionState.warmedUp = false;
+  promotionState.eligible.clear();
+}
+
+interface SupplierEligibilityRow {
+  id: number;
+  code: string;
+}
+
+/**
+ * Snapshot the current `enabled_in_twap=true AND status='active'`
+ * supplier set. Diff against the previous snapshot; fire one
+ * `vendor_promoted_to_twap` per supplier that's newly eligible.
+ *
+ * Called once per worker cycle, before the per-peptide loop.
+ * Best-effort: a DB error here logs and returns without firing —
+ * the worker continues its TWAP cycle. The promotion event is
+ * cosmetic; the actual TWAP filtering already happened in
+ * loadLatestObservationsPerSupplier.
+ */
+export async function detectVendorPromotions(
+  supabase: AdminClient | SupabaseClient,
+): Promise<void> {
+  // Cast through SupabaseClient — `enabled_in_twap` (migration 0036)
+  // isn't in the generated @peptide-oracle/db types yet, so the
+  // typed client's .eq() rejects the column name. Cast scoped to
+  // this function only so the rest of the worker stays typed.
+  const sb = supabase as unknown as SupabaseClient;
+  const { data, error } = await sb
+    .from("suppliers")
+    .select("id, code")
+    .eq("status", "active")
+    .eq("enabled_in_twap", true);
+  if (error) {
+    console.warn(
+      `[worker] detectVendorPromotions query failed (non-fatal): ${error.message}`,
+    );
+    return;
+  }
+  const rows = (data ?? []) as SupplierEligibilityRow[];
+  const current = new Map<number, string>(rows.map((r) => [r.id, r.code]));
+
+  if (promotionState.warmedUp) {
+    for (const [id, code] of current) {
+      if (!promotionState.eligible.has(id)) {
+        void logAnomaly({
+          severity: "info",
+          eventType: "vendor_promoted_to_twap",
+          description: `vendor ${code} (id=${id}) flipped enabled_in_twap → true; observations now contribute to TWAP cohorts`,
+          vendorId: code,
+          context: {
+            supplier_id: id,
+            supplier_code: code,
+            promoted_at: new Date().toISOString(),
+          },
+        });
+      }
+    }
+  }
+  // Update snapshot regardless of whether we fired (warmup or
+  // steady-state). Demotions are intentionally NOT logged — they're
+  // operator-initiated and visible at the API layer; only positive
+  // transitions are loud.
+  promotionState.eligible = current;
+  promotionState.warmedUp = true;
 }
