@@ -55,14 +55,29 @@ export async function markFinalized(
     cycle_id: number;
     solana_slot: number;
     finalized_at: Date;
+    /**
+     * Verification attestation captured from getTransaction(signature)
+     * at finalization (migration 0037). All three are nullable on the
+     * write path: when the post-finalization fetch fails (RPC blip,
+     * tx not yet indexed), we still mark finalized but leave the
+     * attestation columns null. The backfill script picks those up
+     * later. See verify.ts for how the verifier handles null vs
+     * populated.
+     */
+    onchain_memo_bytes: string | null;
+    authority_pubkey: string | null;
+    confirmed_slot: number | null;
   },
 ): Promise<number> {
   const rows = await sql<{ updated: number }[]>`
     WITH updated AS (
       UPDATE public.commit_cycles
-      SET    status       = 'finalized',
-             solana_slot  = ${args.solana_slot},
-             finalized_at = ${args.finalized_at}
+      SET    status              = 'finalized',
+             solana_slot         = ${args.solana_slot},
+             finalized_at        = ${args.finalized_at},
+             onchain_memo_bytes  = ${args.onchain_memo_bytes},
+             authority_pubkey    = ${args.authority_pubkey},
+             confirmed_slot      = ${args.confirmed_slot}
       WHERE  cycle_id = ${args.cycle_id}
         AND  status   = 'submitted'
       RETURNING 1 AS updated

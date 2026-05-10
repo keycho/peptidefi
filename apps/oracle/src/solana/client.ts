@@ -124,6 +124,90 @@ export class OracleSolanaClient {
     return res.value[0] ?? null;
   }
 
+  /**
+   * Fetch a finalized transaction's canonical attestation:
+   *   - the slot it actually landed in (per the validator's record,
+   *     not the slot we observed at the finalization tick — those
+   *     can drift by 1–2 slots near finality)
+   *   - the Memo instruction's UTF-8 bytes, byte-for-byte as the
+   *     network stored them
+   *   - the signer pubkeys (first numRequiredSignatures account keys)
+   *
+   * Used at finalization to populate commit_cycles.confirmed_slot /
+   * .authority_pubkey / .onchain_memo_bytes (migration 0037), so the
+   * verifier compares intent (memo_payload) against on-chain truth
+   * captured at commit time rather than at every read.
+   *
+   * Returns null if the tx is unknown to the validator (dropped,
+   * expired, or never landed). Throws on RPC error so the caller
+   * can decide whether to retry the finalization step.
+   *
+   * Mirrors apps/api/src/solana.ts::fetchOnChainMemo() — the API has
+   * its own copy because @solana/web3.js's Connection lives in two
+   * different module trees here. Keeping them in sync is one of the
+   * spec's known cross-package duplications.
+   */
+  async getFinalizedTransaction(
+    signature: string,
+  ): Promise<{
+    slot: number;
+    memo: string | null;
+    signers: string[];
+    blockTime: number | null;
+  } | null> {
+    const tx = await this.connection.getTransaction(signature, {
+      commitment: "finalized",
+      maxSupportedTransactionVersion: 0,
+    });
+    if (!tx) return null;
+
+    const { transaction, meta } = tx;
+    const message = transaction.message;
+    // Account keys are typed differently for legacy vs v0 messages.
+    // staticAccountKeys gets us the keys for both shapes.
+    const accountKeys = "staticAccountKeys" in message
+      ? (message as { staticAccountKeys: { toBase58(): string }[] }).staticAccountKeys
+      : (message as { accountKeys: { toBase58(): string }[] }).accountKeys;
+
+    const numSigs = (message.header?.numRequiredSignatures ?? 1) | 0;
+    const signers: string[] = [];
+    for (let i = 0; i < numSigs && i < accountKeys.length; i++) {
+      signers.push(accountKeys[i]!.toBase58());
+    }
+
+    // Memo program — the only ix data we want decoded as UTF-8.
+    // Solana memo program id is hardcoded to avoid depending on
+    // @solana/spl-memo here.
+    const MEMO_PROGRAM_ID = "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr";
+    let memo: string | null = null;
+    const compiledInstructions =
+      "compiledInstructions" in message
+        ? (message as { compiledInstructions: { programIdIndex: number; data: Uint8Array }[] })
+            .compiledInstructions
+        : (message as { instructions: { programIdIndex: number; data: string }[] }).instructions;
+    for (const ix of compiledInstructions) {
+      const programId = accountKeys[ix.programIdIndex]?.toBase58();
+      if (programId !== MEMO_PROGRAM_ID) continue;
+      // compiledInstructions: data is Uint8Array. legacy: data is base58.
+      const bytes =
+        ix.data instanceof Uint8Array
+          ? ix.data
+          : (await import("bs58")).default.decode(ix.data);
+      memo = Buffer.from(bytes).toString("utf-8");
+      break;
+    }
+
+    // Hush the unused-binding lint; meta is destructured above for
+    // forward-compat (some callers may want fee / err / log info).
+    void meta;
+    return {
+      slot: tx.slot,
+      memo,
+      signers,
+      blockTime: tx.blockTime ?? null,
+    };
+  }
+
   /** Wallet balance in lamports. Used for the §3.5.2 startup gate. */
   async getBalanceLamports(pubkey: string): Promise<number> {
     return this.connection.getBalance(
