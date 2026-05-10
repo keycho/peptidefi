@@ -47,14 +47,24 @@ export async function markFinalizedTwap(
     id: string;
     solana_slot: number;
     finalized_at: Date;
+    /** Verification attestation captured from getTransaction. See
+     *  cycle-state.markFinalized for the full rationale. Nullable
+     *  on the write path so a transient RPC failure doesn't block
+     *  finalization; backfill picks up the gap. */
+    onchain_memo_bytes: string | null;
+    authority_pubkey: string | null;
+    confirmed_slot: number | null;
   },
 ): Promise<number> {
   const rows = await sql<{ updated: number }[]>`
     WITH updated AS (
       UPDATE public.twap_commits
-      SET    status       = 'finalized',
-             solana_slot  = ${args.solana_slot},
-             finalized_at = ${args.finalized_at}
+      SET    status              = 'finalized',
+             solana_slot         = ${args.solana_slot},
+             finalized_at        = ${args.finalized_at},
+             onchain_memo_bytes  = ${args.onchain_memo_bytes},
+             authority_pubkey    = ${args.authority_pubkey},
+             confirmed_slot      = ${args.confirmed_slot}
       WHERE  id = ${args.id}
         AND  status = 'submitted'
       RETURNING 1 AS updated

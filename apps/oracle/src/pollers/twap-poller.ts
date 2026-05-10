@@ -204,10 +204,14 @@ async function reconcileInFlight(opts: TwapPollerOptions): Promise<void> {
 
   if (isFinalized(status)) {
     const slot = status?.slot ?? 0;
+    const attestation = await fetchFinalizedAttestationTwap(opts, solana_signature, peptide_code);
     await markFinalizedTwap(opts.sql, {
       id,
       solana_slot: slot,
       finalized_at: new Date(),
+      onchain_memo_bytes: attestation.onchain_memo_bytes,
+      authority_pubkey: attestation.authority_pubkey,
+      confirmed_slot: attestation.confirmed_slot,
     });
     opts.health.twap.last_commit_at = new Date().toISOString();
     opts.health.twap.in_flight_count = Math.max(
@@ -216,6 +220,7 @@ async function reconcileInFlight(opts: TwapPollerOptions): Promise<void> {
     );
     console.log(
       `[twap-poller] peptide=${peptide_code} FINALIZED slot=${slot} ` +
+        `confirmed_slot=${attestation.confirmed_slot ?? "null"} ` +
         `sig=${solana_signature}`,
     );
     await invokePegPusherBestEffort(opts, {
@@ -254,10 +259,14 @@ async function reconcileInFlight(opts: TwapPollerOptions): Promise<void> {
   }
   if (isFinalized(recheck)) {
     const slot = recheck?.slot ?? 0;
+    const attestation = await fetchFinalizedAttestationTwap(opts, solana_signature, peptide_code);
     await markFinalizedTwap(opts.sql, {
       id,
       solana_slot: slot,
       finalized_at: new Date(),
+      onchain_memo_bytes: attestation.onchain_memo_bytes,
+      authority_pubkey: attestation.authority_pubkey,
+      confirmed_slot: attestation.confirmed_slot,
     });
     opts.health.twap.last_commit_at = new Date().toISOString();
     opts.health.twap.in_flight_count = Math.max(
@@ -265,7 +274,8 @@ async function reconcileInFlight(opts: TwapPollerOptions): Promise<void> {
       opts.health.twap.in_flight_count - 1,
     );
     console.log(
-      `[twap-poller] peptide=${peptide_code} FINALIZED (late) slot=${slot}`,
+      `[twap-poller] peptide=${peptide_code} FINALIZED (late) slot=${slot} ` +
+        `confirmed_slot=${attestation.confirmed_slot ?? "null"}`,
     );
     await invokePegPusherBestEffort(opts, {
       peptide_code,
@@ -741,4 +751,42 @@ function hexToBytes32(hex: string): Uint8Array {
     bytes[i] = parseInt(clean.slice(i * 2, i * 2 + 2), 16);
   }
   return bytes;
+}
+
+/**
+ * TWAP-side mirror of cycle-poller's fetchFinalizedAttestation. Same
+ * best-effort semantics: an RPC failure leaves the three new columns
+ * null, the row still finalizes, the backfill script catches up.
+ * See migration 0037 for the column rationale.
+ */
+async function fetchFinalizedAttestationTwap(
+  opts: TwapPollerOptions,
+  signature: string,
+  peptideCode: string,
+): Promise<{
+  onchain_memo_bytes: string | null;
+  authority_pubkey: string | null;
+  confirmed_slot: number | null;
+}> {
+  let tx;
+  try {
+    tx = await opts.solana.getFinalizedTransaction(signature);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn(
+      `[twap-poller] peptide=${peptideCode} getFinalizedTransaction failed (non-fatal); attestation columns null until backfill: ${msg}`,
+    );
+    return { onchain_memo_bytes: null, authority_pubkey: null, confirmed_slot: null };
+  }
+  if (!tx) {
+    console.warn(
+      `[twap-poller] peptide=${peptideCode} getFinalizedTransaction returned null for sig=${signature}; attestation columns null until backfill`,
+    );
+    return { onchain_memo_bytes: null, authority_pubkey: null, confirmed_slot: null };
+  }
+  return {
+    onchain_memo_bytes: tx.memo,
+    authority_pubkey: tx.signers[0] ?? null,
+    confirmed_slot: tx.slot,
+  };
 }

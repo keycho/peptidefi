@@ -135,10 +135,14 @@ async function reconcileInFlight(opts: CyclePollerOptions): Promise<void> {
   // (a) Finalized → transition to 'finalized'
   if (isFinalized(status)) {
     const slot = status?.slot ?? 0;
+    const attestation = await fetchFinalizedAttestation(opts, solana_signature, cycle_id);
     await markFinalized(opts.sql, {
       cycle_id,
       solana_slot: slot,
       finalized_at: new Date(),
+      onchain_memo_bytes: attestation.onchain_memo_bytes,
+      authority_pubkey: attestation.authority_pubkey,
+      confirmed_slot: attestation.confirmed_slot,
     });
     opts.health.cycle.last_commit_at = new Date().toISOString();
     opts.health.cycle.last_committed_cycle_id = cycle_id;
@@ -148,6 +152,7 @@ async function reconcileInFlight(opts: CyclePollerOptions): Promise<void> {
     );
     console.log(
       `[cycle-poller] cycle_id=${cycle_id} FINALIZED slot=${slot} ` +
+        `confirmed_slot=${attestation.confirmed_slot ?? "null"} ` +
         `sig=${solana_signature}`,
     );
     return;
@@ -187,10 +192,14 @@ async function reconcileInFlight(opts: CyclePollerOptions): Promise<void> {
   }
   if (isFinalized(recheck)) {
     const slot = recheck?.slot ?? 0;
+    const attestation = await fetchFinalizedAttestation(opts, solana_signature, cycle_id);
     await markFinalized(opts.sql, {
       cycle_id,
       solana_slot: slot,
       finalized_at: new Date(),
+      onchain_memo_bytes: attestation.onchain_memo_bytes,
+      authority_pubkey: attestation.authority_pubkey,
+      confirmed_slot: attestation.confirmed_slot,
     });
     opts.health.cycle.last_commit_at = new Date().toISOString();
     opts.health.cycle.last_committed_cycle_id = cycle_id;
@@ -199,7 +208,8 @@ async function reconcileInFlight(opts: CyclePollerOptions): Promise<void> {
       opts.health.cycle.in_flight_count - 1,
     );
     console.log(
-      `[cycle-poller] cycle_id=${cycle_id} FINALIZED (late) slot=${slot}`,
+      `[cycle-poller] cycle_id=${cycle_id} FINALIZED (late) slot=${slot} ` +
+        `confirmed_slot=${attestation.confirmed_slot ?? "null"}`,
     );
     return;
   }
@@ -563,4 +573,62 @@ function classifyLastError(lastError: string | null): ErrorClass {
     if (lastError.startsWith(cls)) return cls;
   }
   return "UNKNOWN";
+}
+
+/**
+ * Fetch the finalized tx and return the three attestation values
+ * (memo, signer, slot) for migration 0037's new columns. Best-effort:
+ * a transient RPC failure here MUST NOT block finalization, since
+ * the row stays at status='submitted' forever otherwise — the cycle
+ * poller would re-finalize the same tx on every tick. We log a warn
+ * and return all-nulls; the backfill script picks up the gap later.
+ *
+ * If the on-chain memo doesn't byte-match the DB's memo_payload,
+ * that's a critical integrity issue (the network confirmed something
+ * different from what we intended to submit). We log loudly but
+ * still STORE the on-chain bytes — that's the canonical truth, and
+ * the verifier's check #6 will surface the mismatch on next read.
+ */
+async function fetchFinalizedAttestation(
+  opts: CyclePollerOptions,
+  signature: string,
+  cycleId: number,
+): Promise<{
+  onchain_memo_bytes: string | null;
+  authority_pubkey: string | null;
+  confirmed_slot: number | null;
+}> {
+  let tx;
+  try {
+    tx = await opts.solana.getFinalizedTransaction(signature);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn(
+      `[cycle-poller] cycle_id=${cycleId} getFinalizedTransaction failed (non-fatal); attestation columns null until backfill: ${msg}`,
+    );
+    return {
+      onchain_memo_bytes: null,
+      authority_pubkey: null,
+      confirmed_slot: null,
+    };
+  }
+  if (!tx) {
+    console.warn(
+      `[cycle-poller] cycle_id=${cycleId} getFinalizedTransaction returned null for sig=${signature} (not yet indexed?); attestation columns null until backfill`,
+    );
+    return {
+      onchain_memo_bytes: null,
+      authority_pubkey: null,
+      confirmed_slot: null,
+    };
+  }
+  return {
+    onchain_memo_bytes: tx.memo,
+    // First signer = the fee-payer = the oracle authority (single
+    // signer per §3 spec). If the tx ever gets co-signed in the
+    // future, this captures the primary; the verifier checks
+    // .includes() so additional signers would still match.
+    authority_pubkey: tx.signers[0] ?? null,
+    confirmed_slot: tx.slot,
+  };
 }

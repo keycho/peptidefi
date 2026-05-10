@@ -125,10 +125,17 @@ export async function verifyObservationHandler(
   checks.push(check("cycle_anchored", true));
 
   // ─── Check 3: cycle_finalized ───────────────────────────────────
+  // Pull the migration-0037 attestation columns alongside the legacy
+  // ones. New cycles have all three populated at finalization;
+  // legacy cycles (pre-0037, or finalization-time RPC failures) have
+  // them null and the verifier falls back to the legacy comparison
+  // path with a specific failure code.
+  // `cluster` is needed to detect devnet-era cycles for the legacy
+  // authority failure code.
   const { data: cycle, error: cErr } = await supabase
     .from("commit_cycles")
     .select(
-      "cycle_id, merkle_root, observation_count, memo_payload, status, solana_signature, solana_slot",
+      "cycle_id, merkle_root, observation_count, memo_payload, status, solana_signature, solana_slot, cluster, onchain_memo_bytes, authority_pubkey, confirmed_slot",
     )
     .eq("cycle_id", junction.cycle_id)
     .maybeSingle();
@@ -267,29 +274,53 @@ export async function verifyObservationHandler(
     return;
   }
 
-  const memoMatches = onChain.memo === cycle.memo_payload;
-  const dbSlot =
-    cycle.solana_slot === null
-      ? null
-      : typeof cycle.solana_slot === "string"
-        ? Number(cycle.solana_slot)
-        : cycle.solana_slot;
-  const slotMatches = dbSlot !== null && onChain.slot === dbSlot;
-  const signerMatches = onChain.signers.includes(config.authorityPubkey);
+  // ─── Checks 6/7/8: attestation comparison ───────────────────────
+  //
+  // Each check now has THREE possible states:
+  //   - PASS:    attestation column populated (migration 0037) and
+  //              matches the live RPC fetch.
+  //   - LEGACY:  attestation column null (cycle predates 0037 or
+  //              the post-finalization RPC fetch failed). Fall back
+  //              to the original comparison against memo_payload /
+  //              solana_slot / current authorityPubkey, but report
+  //              a specific failure code so the operator can tell
+  //              "this needs backfill" from "the chain disagrees".
+  //   - FAIL:    attestation column populated but doesn't match the
+  //              live fetch — real integrity violation.
+  //
+  // Helpers below encapsulate the three-way decision per check.
 
-  if (!memoMatches) {
+  const memoCheck = decideMemoCheck({
+    onChainMemo: onChain.memo,
+    intentMemo: cycle.memo_payload,
+    attestedMemo: cycle.onchain_memo_bytes ?? null,
+  });
+  const slotCheck = decideSlotCheck({
+    onChainSlot: onChain.slot,
+    legacySlot: coerceSlot(cycle.solana_slot),
+    attestedSlot: coerceSlot(cycle.confirmed_slot),
+  });
+  const signerCheck = decideSignerCheck({
+    onChainSigners: onChain.signers,
+    attestedAuthority: cycle.authority_pubkey ?? null,
+    currentAuthority: config.authorityPubkey,
+    cycleCluster: cycle.cluster ?? null,
+    apiCluster: config.cluster,
+  });
+
+  if (memoCheck.outcome !== "pass") {
     res.json({
       verified: false,
       observation_id: observationId,
       cycle_id: junction.cycle_id,
       failure_reason: "memo_matches_onchain",
-      failure_detail:
-        "on-chain memo bytes differ from commit_cycles.memo_payload — DB record was mutated post-commit, or wrong signature is referenced",
+      failure_code: memoCheck.code,
+      failure_detail: memoCheck.detail,
       checks: [
         ...checks,
-        check("memo_matches_onchain", false),
-        { name: "slot_matches_onchain", passed: slotMatches },
-        { name: "signer_matches_authority", passed: signerMatches },
+        check("memo_matches_onchain", false, memoCheck.code),
+        { name: "slot_matches_onchain", passed: slotCheck.outcome === "pass" },
+        { name: "signer_matches_authority", passed: signerCheck.outcome === "pass" },
       ],
       on_chain: {
         signature: cycle.solana_signature,
@@ -302,31 +333,36 @@ export async function verifyObservationHandler(
   }
   checks.push(check("memo_matches_onchain", true));
 
-  if (!slotMatches) {
+  if (slotCheck.outcome !== "pass") {
     res.json({
       verified: false,
       observation_id: observationId,
       cycle_id: junction.cycle_id,
       failure_reason: "slot_matches_onchain",
-      failure_detail: `commit_cycles.solana_slot=${dbSlot} but on-chain reports slot=${onChain.slot}`,
+      failure_code: slotCheck.code,
+      failure_detail: slotCheck.detail,
       checks: [
         ...checks,
-        check("slot_matches_onchain", false),
-        { name: "signer_matches_authority", passed: signerMatches },
+        check("slot_matches_onchain", false, slotCheck.code),
+        { name: "signer_matches_authority", passed: signerCheck.outcome === "pass" },
       ],
     });
     return;
   }
   checks.push(check("slot_matches_onchain", true));
 
-  if (!signerMatches) {
+  if (signerCheck.outcome !== "pass") {
     res.json({
       verified: false,
       observation_id: observationId,
       cycle_id: junction.cycle_id,
       failure_reason: "signer_matches_authority",
-      failure_detail: `on-chain signers ${onChain.signers.join(", ")} do not include the configured authority pubkey ${config.authorityPubkey}`,
-      checks: [...checks, check("signer_matches_authority", false)],
+      failure_code: signerCheck.code,
+      failure_detail: signerCheck.detail,
+      checks: [
+        ...checks,
+        check("signer_matches_authority", false, signerCheck.code),
+      ],
     });
     return;
   }
@@ -353,3 +389,172 @@ export async function verifyObservationHandler(
     checks,
   });
 }
+
+// ─── Three-way attestation decision helpers ───────────────────────
+//
+// Pure, testable, exported via _internal so the regression tests
+// can pin every (PASS / LEGACY / FAIL) branch.
+//
+// Failure codes are meant to be machine-readable: a Lovable client
+// can branch on `failure_code` to render different UI for "we need
+// to run the backfill" vs "the chain genuinely disagrees with our DB".
+
+type CheckOutcome =
+  | { outcome: "pass" }
+  | { outcome: "fail"; code: string; detail: string };
+
+/**
+ * memo: prefer the captured attestation column (cycle.onchain_memo_bytes,
+ * stored at finalization in migration 0037). If present, all three —
+ * intent (memo_payload), attestation (onchain_memo_bytes), and the
+ * live RPC fetch (onChainMemo) — must match. If the attestation is
+ * null, fall back to the legacy intent-vs-RPC compare and return
+ * LEGACY_MEMO_NOT_BACKFILLED on mismatch.
+ */
+function decideMemoCheck(args: {
+  onChainMemo: string | null;
+  intentMemo: string | null;
+  attestedMemo: string | null;
+}): CheckOutcome {
+  if (args.onChainMemo === null) {
+    return {
+      outcome: "fail",
+      code: "ONCHAIN_MEMO_MISSING",
+      detail: "live RPC fetch returned no memo (tx may lack a Memo instruction)",
+    };
+  }
+  if (args.attestedMemo !== null) {
+    // Strong path: attestation captured at finalization. Both
+    // intent and live fetch must match the attestation.
+    if (args.attestedMemo !== args.onChainMemo) {
+      return {
+        outcome: "fail",
+        code: "ONCHAIN_DRIFT_FROM_ATTESTATION",
+        detail:
+          "live RPC memo differs from the attestation captured at finalization — RPC may be returning a reorganized result, or the attestation column was tampered with",
+      };
+    }
+    if (args.intentMemo !== args.attestedMemo) {
+      return {
+        outcome: "fail",
+        code: "INTENT_DRIFT_FROM_ATTESTATION",
+        detail:
+          "memo_payload (oracle's intended memo at submission) differs from the attestation — DB was mutated post-commit, or the encoder version changed between memo_payload generation and tx submission",
+      };
+    }
+    return { outcome: "pass" };
+  }
+  // Legacy path: no attestation column. Fall back to intent-vs-RPC
+  // compare. Mismatches here are genuinely indistinguishable from
+  // "needs backfill" — surface a specific code.
+  if (args.intentMemo !== args.onChainMemo) {
+    return {
+      outcome: "fail",
+      code: "LEGACY_MEMO_NOT_BACKFILLED",
+      detail:
+        "memo_payload differs from live on-chain memo, and onchain_memo_bytes is null. Either run the backfill (scripts/backfill-cycle-onchain.ts) to capture the canonical attestation, or this is a real DB-vs-chain drift that needs investigation",
+    };
+  }
+  return { outcome: "pass" };
+}
+
+/**
+ * slot: prefer cycle.confirmed_slot (from getTransaction at
+ * finalization) over cycle.solana_slot (from getSignatureStatus,
+ * which can drift by 1–2 slots near finality boundaries).
+ */
+function decideSlotCheck(args: {
+  onChainSlot: number;
+  legacySlot: number | null;
+  attestedSlot: number | null;
+}): CheckOutcome {
+  if (args.attestedSlot !== null) {
+    if (args.attestedSlot !== args.onChainSlot) {
+      return {
+        outcome: "fail",
+        code: "SLOT_DRIFT_FROM_ATTESTATION",
+        detail: `confirmed_slot=${args.attestedSlot} but live getTransaction reports slot=${args.onChainSlot}. RPC reorg or attestation tamper.`,
+      };
+    }
+    return { outcome: "pass" };
+  }
+  // Legacy: no confirmed_slot. Fall back to solana_slot, with the
+  // "needs backfill" code if it disagrees.
+  if (args.legacySlot === null) {
+    return {
+      outcome: "fail",
+      code: "LEGACY_SLOT_NOT_BACKFILLED",
+      detail:
+        "neither confirmed_slot nor solana_slot is populated. Run scripts/backfill-cycle-onchain.ts to backfill from on-chain.",
+    };
+  }
+  if (args.legacySlot !== args.onChainSlot) {
+    return {
+      outcome: "fail",
+      code: "LEGACY_SLOT_NOT_BACKFILLED",
+      detail: `solana_slot=${args.legacySlot} but live on-chain slot=${args.onChainSlot}. solana_slot is the slot observed at finalization-tick (estimate); confirmed_slot (from getTransaction) is canonical. Run the backfill.`,
+    };
+  }
+  return { outcome: "pass" };
+}
+
+/**
+ * signer: prefer cycle.authority_pubkey (the signer captured at
+ * finalization, i.e. the actual signer for this cycle) over the
+ * current global config.authorityPubkey (which would be wrong for
+ * any cycle signed before the most recent authority rotation, and
+ * for any devnet-era cycle).
+ */
+function decideSignerCheck(args: {
+  onChainSigners: string[];
+  attestedAuthority: string | null;
+  currentAuthority: string;
+  cycleCluster: string | null;
+  apiCluster: string;
+}): CheckOutcome {
+  if (args.attestedAuthority !== null) {
+    if (!args.onChainSigners.includes(args.attestedAuthority)) {
+      return {
+        outcome: "fail",
+        code: "SIGNER_DRIFT_FROM_ATTESTATION",
+        detail: `attested authority ${args.attestedAuthority} is not in on-chain signers ${args.onChainSigners.join(", ")}. Either the attestation was tampered with or RPC returned a reorganized tx.`,
+      };
+    }
+    return { outcome: "pass" };
+  }
+  // Legacy path: explicit signal for the cross-cluster case.
+  // A devnet-era commit_cycle (cluster='devnet') being verified
+  // against a mainnet authority will never pass; surface that
+  // distinctly so the client can render a "legacy / not verifiable
+  // on this cluster" state.
+  if (args.cycleCluster && args.cycleCluster !== args.apiCluster) {
+    return {
+      outcome: "fail",
+      code: "DEVNET_LEGACY_AUTHORITY",
+      detail: `cycle was committed on cluster='${args.cycleCluster}' but the verifier API runs on cluster='${args.apiCluster}'. Pre-cutover devnet cycles cannot be verified against the mainnet authority. authority_pubkey is null — run the backfill if you want a per-cycle authority record.`,
+    };
+  }
+  if (!args.onChainSigners.includes(args.currentAuthority)) {
+    return {
+      outcome: "fail",
+      code: "LEGACY_AUTHORITY_NOT_BACKFILLED",
+      detail: `on-chain signers ${args.onChainSigners.join(", ")} do not include the current authority ${args.currentAuthority}, and authority_pubkey is null. The cycle may have been signed by a previous authority before rotation. Run scripts/backfill-cycle-onchain.ts to capture the actual signer per cycle.`,
+    };
+  }
+  return { outcome: "pass" };
+}
+
+/** Slot column may come back as string or number from PostgREST. */
+function coerceSlot(raw: number | string | null | undefined): number | null {
+  if (raw === null || raw === undefined) return null;
+  const n = typeof raw === "string" ? Number(raw) : raw;
+  return Number.isFinite(n) ? n : null;
+}
+
+/** Test-only export of the pure decision helpers + slot coercion. */
+export const _internal = {
+  decideMemoCheck,
+  decideSlotCheck,
+  decideSignerCheck,
+  coerceSlot,
+};
