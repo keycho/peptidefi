@@ -142,10 +142,16 @@ create table if not exists public.vendor_leads (
   tier3_paid_at            timestamptz,
   tier3_amount_usdc        numeric,
   intro_path_used          boolean not null default false,
-  -- Lifecycle
+  -- Lifecycle. responded_at is the entry timestamp for the
+  -- vendor_responded state — the lead-expiry sweeper measures the
+  -- 30-day "stalled after response" window from this stamp, not
+  -- from accepted_at (which is too early). Set in /progress when
+  -- milestone=vendor_responded; null for leads that never reach
+  -- Tier 2.
   submitted_at             timestamptz not null default now(),
   reviewed_at              timestamptz,
   accepted_at              timestamptz,
+  responded_at             timestamptz,
   converted_at             timestamptz,
   expired_at               timestamptz,
   notes                    text                              -- internal-only

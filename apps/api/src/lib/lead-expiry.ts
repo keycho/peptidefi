@@ -90,10 +90,17 @@ export async function runLeadExpiryJob(
   }
 
   // 3. vendor_responded > 30d → expired
+  // Measure from responded_at — the canonical entry timestamp for
+  // the vendor_responded state, set in /progress when the milestone
+  // was hit. Using accepted_at here would be wrong: a lead that sat
+  // in accepted_pipeline for 50d before the vendor finally responded
+  // would be expired immediately on the next sweep, because
+  // now-accepted_at > 30d already. responded_at correctly resets
+  // the 30-day clock at the actual state transition.
   const respondedExpired = await fetchExpirableLeads(
     supabase,
     "vendor_responded",
-    "accepted_at", // converted_at would be wrong (set on Tier 3); accepted_at is the last positive timestamp
+    "responded_at",
     respondedCutoff,
   );
   for (const lead of respondedExpired) {

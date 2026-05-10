@@ -364,6 +364,14 @@ export async function adminProgressHandler(
     notes: parsed.data.notes ?? null,
   };
   if (tier === 2) {
+    // responded_at = the canonical entry timestamp for the
+    // vendor_responded state. The lead-expiry sweeper measures the
+    // 30-day stalled-after-response window from this column, NOT
+    // from accepted_at (which would expire freshly-responded leads
+    // any time the response landed >30d after acceptance). Set
+    // unconditionally — even for affiliated submitters where
+    // tier2_paid_at stays null, responded_at is what gates expiry.
+    leadUpdate.responded_at = new Date().toISOString();
     leadUpdate.tier2_paid_at = new Date().toISOString();
     leadUpdate.tier2_amount_usdc = payout?.amountUsdc ?? 0;
   } else {

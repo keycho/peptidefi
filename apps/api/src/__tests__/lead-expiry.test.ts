@@ -183,7 +183,11 @@ describe("runLeadExpiryJob", () => {
     expect(update!.updatePayload!.expired_at).toBeTruthy();
   });
 
-  it("expires vendor_responded leads older than 30 days", async () => {
+  it("expires vendor_responded leads older than 30 days, KEYED ON responded_at", async () => {
+    // REGRESSION: pre-fix this used accepted_at, which meant a lead
+    // accepted 50 days ago and just-responded today would be expired
+    // immediately. Using responded_at correctly resets the 30-day
+    // clock at the actual vendor-response transition.
     const fake = makeFakeSupabase();
     fake.enqueue([]);
     fake.enqueue([]);
@@ -202,9 +206,10 @@ describe("runLeadExpiryJob", () => {
         q.table === "vendor_leads" &&
         q.filters.some((f) => f.op === "eq" && f.val === "vendor_responded"),
     );
-    const cutoffMs = new Date(
-      respondedSelect!.filters.find((f) => f.op === "lte")!.val as string,
-    ).getTime();
+    // The cutoff filter MUST be on responded_at, not accepted_at.
+    const cutoffFilter = respondedSelect!.filters.find((f) => f.op === "lte");
+    expect(cutoffFilter?.col).toBe("responded_at");
+    const cutoffMs = new Date(cutoffFilter!.val as string).getTime();
     const expectedMs = now.getTime() - RESPONDED_TIMEOUT_DAYS * 86400_000;
     expect(Math.abs(cutoffMs - expectedMs)).toBeLessThan(1000);
   });
