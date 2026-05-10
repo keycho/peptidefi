@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Request, Response } from "express";
 
-import { isPublicGetPath } from "../index";
+import { buildApp, isPublicGetPath, RELEASE_VERSION } from "../app";
 import { sendError, errors, type ApiErrorBody } from "../errors";
 
 /**
