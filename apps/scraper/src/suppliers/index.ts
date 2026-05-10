@@ -64,6 +64,16 @@ export const SUPPLIERS: Partial<Record<string, SupplierModule>> = {
   // flakiness during typical deploys.
   PURERAWZ:   createWooModule({ supplierCode: "PURERAWZ",   host: "purerawz.co" }),
   SWISSCHEMS: createWooModule({ supplierCode: "SWISSCHEMS", host: "swisschems.is" }),
+  // Added in migration 0036. All three land at enabled_in_twap=false
+  // — observations recorded, but excluded from TWAP cohorts pending
+  // 7-day quality review. PEPTIDELABS is behind a Sucuri WAF that
+  // blocks datacenter IPs (verified via sandbox curl: HTTP 202 +
+  // sgcaptcha challenge); production needs SCRAPER_USE_PROXY=true.
+  // PURETESTED's www subdomain is required — the host is set to
+  // 'www.puretestedpeptides.com' literally (not a redirect chase).
+  PANDA:       createWooModule({ supplierCode: "PANDA",       host: "pandapeptides.com" }),
+  PURETESTED:  createWooModule({ supplierCode: "PURETESTED",  host: "www.puretestedpeptides.com" }),
+  PEPTIDELABS: createWooModule({ supplierCode: "PEPTIDELABS", host: "peptidelabsinc.com" }),
 };
 
 const stubModule: SupplierModule = {

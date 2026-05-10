@@ -1,6 +1,7 @@
 import "dotenv/config";
 import {
   type HealthState,
+  createAdminClientUntyped,
   initAnomalyLog,
   logAnomaly,
   sleepInterruptible,
@@ -67,9 +68,62 @@ import { getProxyDiagnostics } from "./suppliers/woocommerce";
           "PULSE",
           "PURERAWZ",
           "SWISSCHEMS",
+          "PANDA",
+          "PURETESTED",
+          "PEPTIDELABS",
         ],
       },
     });
+
+    // ── vendor_onboarded ─────────────────────────────────────────
+    // Fire one info event per active vendor that's currently
+    // enabled_in_twap=false. This captures the "vendor is being
+    // scraped but observations are quarantined from TWAP cohorts"
+    // state on every fresh deploy, so the operations log answers
+    // "which vendors are in the 7-day quality-review window?"
+    // without scrolling back through migration history.
+    //
+    // Fires at every restart by design — the event is cheap and
+    // the snapshot is useful confirmation, not a one-shot signal.
+    // Pair with vendor_promoted_to_twap (worker) to see the full
+    // lifecycle: onboarded → observed → promoted → producing prices.
+    void (async () => {
+      try {
+        // Untyped client — `enabled_in_twap` exists in the schema
+        // (migration 0036) but isn't in the generated Database types
+        // yet. Switch to typed createAdminClient() once @peptide-oracle/db
+        // is regenerated.
+        const supabase = createAdminClientUntyped();
+        const { data, error } = await supabase
+          .from("suppliers")
+          .select("code, enabled_in_twap")
+          .eq("status", "active")
+          .eq("enabled_in_twap", false);
+        if (error) {
+          console.warn(
+            `[startup] vendor_onboarded query failed (non-fatal): ${error.message}`,
+          );
+          return;
+        }
+        for (const v of (data ?? []) as Array<{ code: string }>) {
+          void logAnomaly({
+            severity: "info",
+            eventType: "vendor_onboarded",
+            description: `vendor ${v.code} active, observations recorded but NOT in TWAP (enabled_in_twap=false)`,
+            vendorId: v.code,
+            context: {
+              supplier_code: v.code,
+              status: "active",
+              enabled_in_twap: false,
+            },
+          });
+        }
+      } catch (err) {
+        console.warn(
+          `[startup] vendor_onboarded threw (non-fatal): ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    })();
   } else {
     console.warn(
       "[startup] SUPABASE_URL or SUPABASE_SECRET_KEY missing; anomaly log disabled (events will console.warn)",

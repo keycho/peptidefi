@@ -41,3 +41,18 @@ export function createAdminClient(): AdminClient {
     },
   });
 }
+
+/**
+ * Untyped variant — same client, but with the Database schema-type
+ * stripped. Use this for tables / columns that exist in the schema
+ * but not yet in the generated `@peptide-oracle/db` types (e.g. a
+ * recently-added column whose types haven't been regenerated).
+ *
+ * Mirrors apps/api/src/supabase.ts::adminClientUntyped() — same
+ * rationale, same one-call-site footprint per new feature. Once
+ * Database types catch up, callers can switch to createAdminClient()
+ * and lose no functionality.
+ */
+export function createAdminClientUntyped(): SupabaseClient {
+  return createAdminClient() as unknown as SupabaseClient;
+}
