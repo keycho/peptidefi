@@ -154,58 +154,64 @@ export class OracleSolanaClient {
     memo: string | null;
     signers: string[];
     blockTime: number | null;
+    /** See apps/api/src/solana.ts:OnChainMemoResult.commitmentUsed for rationale. */
+    commitmentUsed: "finalized" | "confirmed";
   } | null> {
-    const tx = await this.connection.getTransaction(signature, {
-      commitment: "finalized",
-      maxSupportedTransactionVersion: 0,
-    });
-    if (!tx) return null;
+    // Try finalized first (strongest); fall back to confirmed if the
+    // RPC returns null. Older txs (months past the cluster's
+    // finalized-tx cache window) are typically only retrievable at
+    // confirmed commitment on free-tier Helius and public RPCs even
+    // when they ARE finalized in the chain. See cycle 1165 incident:
+    // sig was confirmed finalized via getSignatureStatuses but
+    // getTransaction(commitment: "finalized") returned null. Same
+    // fix as apps/api/src/solana.ts.
+    for (const commitment of ["finalized", "confirmed"] as const) {
+      const tx = await this.connection.getTransaction(signature, {
+        commitment,
+        maxSupportedTransactionVersion: 0,
+      });
+      if (!tx) continue;
 
-    const { transaction, meta } = tx;
-    const message = transaction.message;
-    // Account keys are typed differently for legacy vs v0 messages.
-    // staticAccountKeys gets us the keys for both shapes.
-    const accountKeys = "staticAccountKeys" in message
-      ? (message as { staticAccountKeys: { toBase58(): string }[] }).staticAccountKeys
-      : (message as { accountKeys: { toBase58(): string }[] }).accountKeys;
+      const { transaction, meta } = tx;
+      const message = transaction.message;
+      const accountKeys = "staticAccountKeys" in message
+        ? (message as { staticAccountKeys: { toBase58(): string }[] }).staticAccountKeys
+        : (message as { accountKeys: { toBase58(): string }[] }).accountKeys;
 
-    const numSigs = (message.header?.numRequiredSignatures ?? 1) | 0;
-    const signers: string[] = [];
-    for (let i = 0; i < numSigs && i < accountKeys.length; i++) {
-      signers.push(accountKeys[i]!.toBase58());
+      const numSigs = (message.header?.numRequiredSignatures ?? 1) | 0;
+      const signers: string[] = [];
+      for (let i = 0; i < numSigs && i < accountKeys.length; i++) {
+        signers.push(accountKeys[i]!.toBase58());
+      }
+
+      const MEMO_PROGRAM_ID = "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr";
+      let memo: string | null = null;
+      const compiledInstructions =
+        "compiledInstructions" in message
+          ? (message as { compiledInstructions: { programIdIndex: number; data: Uint8Array }[] })
+              .compiledInstructions
+          : (message as { instructions: { programIdIndex: number; data: string }[] }).instructions;
+      for (const ix of compiledInstructions) {
+        const programId = accountKeys[ix.programIdIndex]?.toBase58();
+        if (programId !== MEMO_PROGRAM_ID) continue;
+        const bytes =
+          ix.data instanceof Uint8Array
+            ? ix.data
+            : (await import("bs58")).default.decode(ix.data);
+        memo = Buffer.from(bytes).toString("utf-8");
+        break;
+      }
+
+      void meta;
+      return {
+        slot: tx.slot,
+        memo,
+        signers,
+        blockTime: tx.blockTime ?? null,
+        commitmentUsed: commitment,
+      };
     }
-
-    // Memo program — the only ix data we want decoded as UTF-8.
-    // Solana memo program id is hardcoded to avoid depending on
-    // @solana/spl-memo here.
-    const MEMO_PROGRAM_ID = "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr";
-    let memo: string | null = null;
-    const compiledInstructions =
-      "compiledInstructions" in message
-        ? (message as { compiledInstructions: { programIdIndex: number; data: Uint8Array }[] })
-            .compiledInstructions
-        : (message as { instructions: { programIdIndex: number; data: string }[] }).instructions;
-    for (const ix of compiledInstructions) {
-      const programId = accountKeys[ix.programIdIndex]?.toBase58();
-      if (programId !== MEMO_PROGRAM_ID) continue;
-      // compiledInstructions: data is Uint8Array. legacy: data is base58.
-      const bytes =
-        ix.data instanceof Uint8Array
-          ? ix.data
-          : (await import("bs58")).default.decode(ix.data);
-      memo = Buffer.from(bytes).toString("utf-8");
-      break;
-    }
-
-    // Hush the unused-binding lint; meta is destructured above for
-    // forward-compat (some callers may want fee / err / log info).
-    void meta;
-    return {
-      slot: tx.slot,
-      memo,
-      signers,
-      blockTime: tx.blockTime ?? null,
-    };
+    return null;
   }
 
   /** Wallet balance in lamports. Used for the §3.5.2 startup gate. */

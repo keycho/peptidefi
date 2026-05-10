@@ -47,71 +47,107 @@ export interface OnChainMemoResult {
   signers: string[];
   /** Block time (Unix epoch seconds), if the cluster reports it. */
   blockTime: number | null;
+  /**
+   * Commitment level at which the tx was retrieved.
+   *
+   * 'finalized' is the strongest guarantee (Solana super-majority
+   * has voted; reorg-proof). 'confirmed' is a weaker but still
+   * cryptographically-valid retrieval — used as a fallback for
+   * older transactions because some RPCs (Helius free tier, public
+   * mainnet RPC) return null for `getTransaction(commitment:
+   * "finalized")` on txs more than ~N slots old, even when the
+   * tx IS finalized in the chain. Their confirmed-tx cache extends
+   * further back than their finalized-tx cache. The verifier
+   * surfaces this distinction in the response so a client can
+   * render "verified at confirmed commitment" for older cycles.
+   */
+  commitmentUsed: "finalized" | "confirmed";
 }
 
 /**
  * Fetch a finalized transaction by signature and extract its Memo
  * instruction data + signers + slot.
  *
- * Returns null if:
- *   - the signature is not found at finalized commitment
- *   - the tx has no Memo instruction
- *   - the Memo's data cannot be decoded as UTF-8 (unlikely; the spec
- *     guarantees canonical JSON UTF-8)
+ * Tries `commitment: "finalized"` first, falls back to "confirmed"
+ * if the RPC returns null. Returns null only if BOTH commitment
+ * levels fail (tx truly not in the cluster's index, or the tx has
+ * no Memo instruction).
+ *
+ * Why the fallback exists: cycle 1165 (sig Sc37P…ovz) was confirmed
+ * finalized at slot 418895292 (~4 months ago) per public RPC's
+ * getSignatureStatuses, but our verifier returned "tx not found
+ * at finalized commitment" because Helius's getTransaction at
+ * finalized commitment returns null for cycles outside its
+ * finalized-tx cache window. Switching the second attempt to
+ * confirmed retrieves the same tx — same signers, same slot,
+ * same memo bytes — with `commitmentUsed: "confirmed"`. The
+ * verifier still considers this verified; the client can render
+ * the distinction.
  */
 export async function fetchOnChainMemo(
   conn: Connection,
   signature: string,
 ): Promise<OnChainMemoResult | null> {
-  const tx = await conn.getTransaction(signature, {
-    commitment: "finalized",
-    maxSupportedTransactionVersion: 0,
-  });
-  if (!tx) return null;
+  for (const commitment of ["finalized", "confirmed"] as const) {
+    const tx = await conn.getTransaction(signature, {
+      commitment,
+      maxSupportedTransactionVersion: 0,
+    });
+    if (!tx) continue;
 
-  const message = tx.transaction.message;
-  // v0 vs legacy have different shapes; we accept both.
-  const accountKeys =
-    "accountKeys" in message
-      ? message.accountKeys
-      : message.staticAccountKeys;
-  const compiledInstructions =
-    "instructions" in message
-      ? message.instructions
-      : message.compiledInstructions;
+    const message = tx.transaction.message;
+    // v0 vs legacy have different shapes; we accept both.
+    const accountKeys =
+      "accountKeys" in message
+        ? message.accountKeys
+        : message.staticAccountKeys;
+    const compiledInstructions =
+      "instructions" in message
+        ? message.instructions
+        : message.compiledInstructions;
 
-  let memoBytes: Buffer | null = null;
-  for (const ix of compiledInstructions) {
-    const programId = accountKeys[ix.programIdIndex]!;
-    if (programId.toBase58() !== MEMO_PROGRAM_ID) continue;
-    // Legacy instructions store data as base58-encoded text.
-    // v0 stores raw Uint8Array.
-    if (typeof ix.data === "string") {
-      memoBytes = Buffer.from(bs58.decode(ix.data));
-    } else {
-      memoBytes = Buffer.from(ix.data);
+    let memoBytes: Buffer | null = null;
+    for (const ix of compiledInstructions) {
+      const programId = accountKeys[ix.programIdIndex]!;
+      if (programId.toBase58() !== MEMO_PROGRAM_ID) continue;
+      // Legacy instructions store data as base58-encoded text.
+      // v0 stores raw Uint8Array.
+      if (typeof ix.data === "string") {
+        memoBytes = Buffer.from(bs58.decode(ix.data));
+      } else {
+        memoBytes = Buffer.from(ix.data);
+      }
+      break;
     }
-    break;
+    if (!memoBytes) {
+      // Tx exists but has no Memo instruction — not a commitment
+      // problem. Return null without trying the next commitment
+      // (it'd find the same tx with the same lack of memo).
+      return null;
+    }
+
+    const memo = memoBytes.toString("utf-8");
+
+    // Signers are the first numRequiredSignatures account keys per
+    // the Solana wire format; they're the ones whose signatures are
+    // required for the tx.
+    const numSigners =
+      "header" in message ? message.header.numRequiredSignatures : 1;
+    const signers = accountKeys
+      .slice(0, numSigners)
+      .map((k) => k.toBase58());
+
+    return {
+      memo,
+      slot: tx.slot,
+      signers,
+      blockTime: tx.blockTime ?? null,
+      commitmentUsed: commitment,
+    };
   }
-  if (!memoBytes) return null;
-
-  const memo = memoBytes.toString("utf-8");
-
-  // Signers are the first numRequiredSignatures account keys per the
-  // Solana wire format; they're the ones whose signatures are required
-  // for the tx.
-  const numSigners =
-    "header" in message ? message.header.numRequiredSignatures : 1;
-  const signers = accountKeys
-    .slice(0, numSigners)
-    .map((k) => k.toBase58());
-
-  return {
-    memo,
-    slot: tx.slot,
-    signers,
-    blockTime: tx.blockTime ?? null,
-  };
+  // Both finalized and confirmed returned null — tx is not retrievable
+  // from this RPC's index at any commitment level.
+  return null;
 }
 
 /**

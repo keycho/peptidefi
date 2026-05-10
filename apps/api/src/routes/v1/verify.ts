@@ -371,6 +371,14 @@ export async function verifyObservationHandler(
   // ─── All checks passed ──────────────────────────────────────────
   res.json({
     verified: true,
+    // Commitment level the on-chain fetch hit. 'finalized' is the
+    // default; 'confirmed' is the fallback fetchOnChainMemo() uses
+    // when finalized returns null (older cycles fall outside some
+    // RPCs' finalized-tx cache window). A client can render
+    // "verified at confirmed commitment" in the latter case — the
+    // tx is still cryptographically valid, just retrieved at a
+    // weaker commitment level.
+    verified_at_commitment: onChain.commitmentUsed,
     observation_id: observationId,
     cycle_id: junction.cycle_id,
     leaf_index: junction.leaf_index,
@@ -383,6 +391,7 @@ export async function verifyObservationHandler(
       cluster: config.cluster,
       memo: onChain.memo,
       block_time: onChain.blockTime,
+      commitment_used: onChain.commitmentUsed,
       solscan_url: solscanUrl(cycle.solana_signature!, config.cluster),
       explorer_url: solanaExplorerUrl(cycle.solana_signature!, config.cluster),
     },
