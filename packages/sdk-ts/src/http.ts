@@ -35,7 +35,7 @@ export interface BioHashClientOptions {
    */
   headers?: Record<string, string>;
   /**
-   * User-Agent header. Defaults to `@biohash/sdk/<version>`.
+   * User-Agent header. Defaults to `@biohashnetwork/sdk/<version>`.
    * Ignored in browsers (the runtime overrides UA).
    */
   userAgent?: string;
@@ -71,7 +71,7 @@ function resolveOptions(opts: BioHashClientOptions): ResolvedOptions {
   if (opts.userAgent !== undefined) {
     headers["User-Agent"] = opts.userAgent;
   } else if (headers["User-Agent"] === undefined) {
-    headers["User-Agent"] = `@biohash/sdk/${SDK_VERSION}`;
+    headers["User-Agent"] = `@biohashnetwork/sdk/${SDK_VERSION}`;
   }
   return {
     baseUrl,

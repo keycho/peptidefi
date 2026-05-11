@@ -1,5 +1,5 @@
 {
-  "name": "@biohash/sdk",
+  "name": "@biohashnetwork/sdk",
   "version": "0.1.0",
   "description": "Official TypeScript SDK for the BioHash public REST API — peptide-market oracle + on-chain commit verifier.",
   "license": "MIT",

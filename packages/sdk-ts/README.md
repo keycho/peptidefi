@@ -1,4 +1,4 @@
-# @biohash/sdk
+# @biohashnetwork/sdk
 
 Official TypeScript SDK for the [BioHash](https://biohash.network) public REST API — a Solana-anchored peptide-market oracle.
 
@@ -13,17 +13,17 @@ Official TypeScript SDK for the [BioHash](https://biohash.network) public REST A
 ## Install
 
 ```bash
-npm install @biohash/sdk
+npm install @biohashnetwork/sdk
 # or
-pnpm add @biohash/sdk
+pnpm add @biohashnetwork/sdk
 # or
-yarn add @biohash/sdk
+yarn add @biohashnetwork/sdk
 ```
 
 ## Quickstart
 
 ```ts
-import { BioHash } from "@biohash/sdk";
+import { BioHash } from "@biohashnetwork/sdk";
 
 const client = new BioHash({
   baseUrl: "https://api.biohash.network", // default
@@ -66,7 +66,7 @@ new BioHash({
   // public rate limits on trusted callers.
   headers: { "X-Admin-Token": process.env.BIOHASH_ADMIN_TOKEN! },
 
-  // User-Agent header. Default `@biohash/sdk/<version>`. Ignored in browsers.
+  // User-Agent header. Default `@biohashnetwork/sdk/<version>`. Ignored in browsers.
   userAgent: "myapp/1.2.3",
 });
 ```
@@ -262,7 +262,7 @@ Params: `{ limit?; cursor?: string; severity?; event_type?; vendor_id?; peptide_
 Every non-recoverable failure throws a `BioHashApiError`. Inspect `code`, `status`, and (where present) `retryAfterSeconds`/`details`:
 
 ```ts
-import { BioHash, BioHashApiError } from "@biohash/sdk";
+import { BioHash, BioHashApiError } from "@biohashnetwork/sdk";
 
 try {
   await client.peptides.get("ZZZ");
