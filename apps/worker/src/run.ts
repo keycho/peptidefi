@@ -122,12 +122,14 @@ export async function runOnce(): Promise<CycleSummary> {
 
   const peptides = await loadActivePeptides(supabase);
 
-  // Snapshot/diff the TWAP-eligible vendor set BEFORE the per-peptide
-  // loop. Fires `vendor_promoted_to_twap` for any supplier whose
+  // Snapshot/diff the TWAP-eligible vendor + peptide sets BEFORE the
+  // per-peptide loop. Fires `vendor_promoted_to_twap` /
+  // `peptide_promoted_to_twap` for any supplier or peptide whose
   // `enabled_in_twap` flipped false→true since the last cycle. First
   // cycle after a process start warms up the snapshot without firing
   // (avoids a flood of events on every Railway redeploy).
   await detectVendorPromotions(supabase);
+  await detectPeptidePromotions(supabase);
 
   let withTwap = 0;
   let withThinData = 0;
@@ -323,13 +325,25 @@ function detectDisagreement(kept: TwapInput[]): DisagreementDetection {
 export const _internal = { detectDisagreement, VENDOR_DISAGREEMENT_THRESHOLD };
 
 async function loadActivePeptides(supabase: AdminClient): Promise<PeptideRow[]> {
-  const { data, error } = await supabase
+  // Two-axis eligibility (mirror of the supplier-side filter in
+  // loadLatestObservationsPerSupplier):
+  //   - peptides.is_active = true       — peptide is in the live set
+  //   - peptides.enabled_in_twap = true — peptide contributes to TWAP
+  //                                        cohorts. New peptides land
+  //                                        at false (migration 0038)
+  //                                        for a 7-day observation
+  //                                        window. Scrape-yes / twap-no.
+  // The cast is for the same reason as the suppliers query — the new
+  // column isn't in the @peptide-oracle/db generated types yet.
+  const sb = supabase as unknown as SupabaseClient;
+  const { data, error } = await sb
     .from("peptides")
     .select("id, code")
     .eq("is_active", true)
+    .eq("enabled_in_twap", true)
     .order("id", { ascending: true });
   if (error) throw new Error(`loadActivePeptides: ${error.message}`);
-  return data ?? [];
+  return (data ?? []) as PeptideRow[];
 }
 
 /**
@@ -514,4 +528,68 @@ export async function detectVendorPromotions(
   // transitions are loud.
   promotionState.eligible = current;
   promotionState.warmedUp = true;
+}
+
+// ─── Anomaly log: peptide_promoted_to_twap ────────────────────────
+//
+// Mirror of detectVendorPromotions but for peptides.enabled_in_twap
+// (migration 0038). New peptides land at enabled_in_twap=false for a
+// 7-day observation window; the operator UPDATEs to true after
+// quality review. This loop fires peptide_promoted_to_twap once per
+// false→true flip, with the same warmup / dedup / silent-demotion
+// semantics as the vendor side.
+
+interface PeptideEligibilityRow {
+  id: number;
+  code: string;
+}
+
+const peptidePromotionState: PromotionState = {
+  warmedUp: false,
+  eligible: new Map(),
+};
+
+/** Test-only — reset cross-cycle peptide-promotion state. */
+export function _resetPeptidePromotionStateForTests(): void {
+  peptidePromotionState.warmedUp = false;
+  peptidePromotionState.eligible.clear();
+}
+
+export async function detectPeptidePromotions(
+  supabase: AdminClient | SupabaseClient,
+): Promise<void> {
+  const sb = supabase as unknown as SupabaseClient;
+  const { data, error } = await sb
+    .from("peptides")
+    .select("id, code")
+    .eq("is_active", true)
+    .eq("enabled_in_twap", true);
+  if (error) {
+    console.warn(
+      `[worker] detectPeptidePromotions query failed (non-fatal): ${error.message}`,
+    );
+    return;
+  }
+  const rows = (data ?? []) as PeptideEligibilityRow[];
+  const current = new Map<number, string>(rows.map((r) => [r.id, r.code]));
+
+  if (peptidePromotionState.warmedUp) {
+    for (const [id, code] of current) {
+      if (!peptidePromotionState.eligible.has(id)) {
+        void logAnomaly({
+          severity: "info",
+          eventType: "peptide_promoted_to_twap",
+          description: `peptide ${code} (id=${id}) flipped enabled_in_twap → true; observations now contribute to TWAP cohorts`,
+          peptideId: code,
+          context: {
+            peptide_id: id,
+            peptide_code: code,
+            promoted_at: new Date().toISOString(),
+          },
+        });
+      }
+    }
+  }
+  peptidePromotionState.eligible = current;
+  peptidePromotionState.warmedUp = true;
 }

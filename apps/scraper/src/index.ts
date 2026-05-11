@@ -118,9 +118,40 @@ import { getProxyDiagnostics } from "./suppliers/woocommerce";
             },
           });
         }
+
+        // ── peptide_onboarded ──────────────────────────────────────
+        // Same lifecycle pattern as vendor_onboarded. Migration 0038
+        // adds peptides.enabled_in_twap (mirror of suppliers.enabled
+        // _in_twap from 0036). New peptides land scrape-yes / twap-no
+        // for a 7-day observation window; this event surfaces them
+        // in the operations log on every fresh scraper deploy.
+        const peptidesQ = await supabase
+          .from("peptides")
+          .select("code, enabled_in_twap")
+          .eq("is_active", true)
+          .eq("enabled_in_twap", false);
+        if (peptidesQ.error) {
+          console.warn(
+            `[startup] peptide_onboarded query failed (non-fatal): ${peptidesQ.error.message}`,
+          );
+        } else {
+          for (const p of (peptidesQ.data ?? []) as Array<{ code: string }>) {
+            void logAnomaly({
+              severity: "info",
+              eventType: "peptide_onboarded",
+              description: `peptide ${p.code} active, observations recorded but NOT in TWAP (enabled_in_twap=false)`,
+              peptideId: p.code,
+              context: {
+                peptide_code: p.code,
+                is_active: true,
+                enabled_in_twap: false,
+              },
+            });
+          }
+        }
       } catch (err) {
         console.warn(
-          `[startup] vendor_onboarded threw (non-fatal): ${err instanceof Error ? err.message : String(err)}`,
+          `[startup] vendor/peptide onboarded threw (non-fatal): ${err instanceof Error ? err.message : String(err)}`,
         );
       }
     })();
