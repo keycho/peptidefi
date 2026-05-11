@@ -1,0 +1,50 @@
+{
+  "name": "@biohash/sdk",
+  "version": "0.1.0",
+  "description": "Official TypeScript SDK for the BioHash public REST API — peptide-market oracle + on-chain commit verifier.",
+  "license": "MIT",
+  "homepage": "https://github.com/keycho/peptidefi/tree/main/packages/sdk-ts",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/keycho/peptidefi.git",
+    "directory": "packages/sdk-ts"
+  },
+  "bugs": "https://github.com/keycho/peptidefi/issues",
+  "keywords": ["biohash", "peptide", "solana", "oracle", "twap", "sdk", "rest", "api"],
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": ["dist", "README.md", "LICENSE"],
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "prepublishOnly": "pnpm run typecheck && pnpm run test && pnpm run build",
+    "release:dry-run": "pnpm publish --dry-run --no-git-checks --access public",
+    "release": "pnpm publish --access public"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
+  },
+  "devDependencies": {
+    "@types/node": "^20.16.11",
+    "tsup": "^8.3.0",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.4"
+  }
+}
