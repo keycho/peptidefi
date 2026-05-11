@@ -56,7 +56,8 @@ describe("BioHash HTTP layer — happy path", () => {
       fetch: fetchImpl,
     });
     const res = await client.peptides.list();
-    expect(res).toEqual({ peptides: [], count: 0 });
+    // Unwrapped: list returns the inner array, not the envelope.
+    expect(res).toEqual([]);
     // Trailing slash trimmed.
     expect(calls[0]!.url).toBe("https://api.example.com/v1/peptides");
   });
@@ -124,7 +125,7 @@ describe("BioHash HTTP layer — retries on 5xx", () => {
       retryBackoffMs: 1, // keep test fast
     });
     const res = await client.peptides.list();
-    expect(res.count).toBe(0);
+    expect(res).toEqual([]);
     expect(calls).toHaveLength(3);
   });
 
@@ -159,7 +160,7 @@ describe("BioHash HTTP layer — retries on 5xx", () => {
       retryBackoffMs: 1,
     });
     const res = await client.peptides.list();
-    expect(res.count).toBe(0);
+    expect(res).toEqual([]);
     expect(calls).toHaveLength(3);
   });
 });
@@ -177,7 +178,7 @@ describe("BioHash HTTP layer — 429 honors Retry-After", () => {
     const t0 = Date.now();
     const res = await client.peptides.list();
     const elapsed = Date.now() - t0;
-    expect(res.count).toBe(0);
+    expect(res).toEqual([]);
     expect(calls).toHaveLength(2);
     // Should be near-instant since Retry-After=0.
     expect(elapsed).toBeLessThan(500);

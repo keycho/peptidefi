@@ -1,18 +1,44 @@
 import { HttpClient, type BioHashClientOptions } from "./http";
 import type {
-  AnomaliesListResponse,
+  AnomaliesListEnvelope,
+  AnomalyEvent,
   CycleDetail,
-  CyclesListResponse,
+  CycleSummary,
+  CyclesListEnvelope,
   ListAnomaliesParams,
   ListCyclesParams,
   ObservationDetailResponse,
   PeptideDetailResponse,
-  PeptidesListResponse,
+  PeptideListItem,
+  PeptidesListEnvelope,
   TwapDetail,
+  VendorLeaderboardEntry,
   VendorPricesResponse,
-  VendorsLeaderboardResponse,
+  VendorsLeaderboardEnvelope,
   VerifyObservationResponse,
 } from "./types";
+
+/**
+ * Resource classes for the BioHash SDK. Each method maps 1:1 to an
+ * endpoint on api.biohash.network and returns a value typed against
+ * the real production response shape.
+ *
+ * For list endpoints the SDK unwraps the JSON envelope and returns
+ * the inner array directly:
+ *
+ *   peptides.list()        → PeptideListItem[]        (from { peptides, count })
+ *   cycles.list()          → CycleSummary[]           (from { cycles, next_cursor })
+ *   vendors.leaderboard()  → VendorLeaderboardEntry[] (from { vendors })
+ *   anomalies.list()       → AnomalyEvent[]           (from { events, next_cursor })
+ *
+ * For the two paginated lists (cycles + anomalies) a parallel
+ * `.listPage()` method returns the full envelope so callers can
+ * drive cursor pagination without losing `next_cursor`.
+ *
+ * Single-item endpoints with multi-field responses (peptide detail,
+ * vendor prices, observations, twaps, verify, cycle detail) are
+ * passed through unchanged.
+ */
 
 /* ─── Resource classes ────────────────────────────────────────────── */
 
@@ -20,12 +46,13 @@ class PeptidesAPI {
   constructor(private readonly http: HttpClient) {}
 
   /** GET /v1/peptides — list every tracked, active peptide. */
-  list(opts?: { signal?: AbortSignal }): Promise<PeptidesListResponse> {
-    return this.http.request<PeptidesListResponse>({
+  async list(opts?: { signal?: AbortSignal }): Promise<PeptideListItem[]> {
+    const env = await this.http.request<PeptidesListEnvelope>({
       method: "GET",
       path: "/v1/peptides",
       ...(opts?.signal ? { signal: opts.signal } : {}),
     });
+    return env.peptides;
   }
 
   /** GET /v1/peptides/:id — single peptide + 7-day TWAP history. */
@@ -85,12 +112,28 @@ class ObservationsAPI {
 class CyclesAPI {
   constructor(private readonly http: HttpClient) {}
 
-  /** GET /v1/cycles — paginated list of commit cycles. */
-  list(
+  /**
+   * GET /v1/cycles — paginated list of commit cycles. Returns the array
+   * directly; use {@link CyclesAPI.listPage} when you need `next_cursor`
+   * to drive pagination.
+   */
+  async list(
     params?: ListCyclesParams,
     opts?: { signal?: AbortSignal },
-  ): Promise<CyclesListResponse> {
-    return this.http.request<CyclesListResponse>({
+  ): Promise<CycleSummary[]> {
+    const env = await this.listPage(params, opts);
+    return env.cycles;
+  }
+
+  /**
+   * GET /v1/cycles — paginated list with the raw envelope, exposing
+   * `next_cursor` so callers can walk pages.
+   */
+  listPage(
+    params?: ListCyclesParams,
+    opts?: { signal?: AbortSignal },
+  ): Promise<CyclesListEnvelope> {
+    return this.http.request<CyclesListEnvelope>({
       method: "GET",
       path: "/v1/cycles",
       ...(params ? { query: params as Record<string, unknown> } : {}),
@@ -136,26 +179,43 @@ class VendorsAPI {
   constructor(private readonly http: HttpClient) {}
 
   /** GET /vendors/leaderboard — public vendor leaderboard, ranked. */
-  leaderboard(opts?: {
+  async leaderboard(opts?: {
     signal?: AbortSignal;
-  }): Promise<VendorsLeaderboardResponse> {
-    return this.http.request<VendorsLeaderboardResponse>({
+  }): Promise<VendorLeaderboardEntry[]> {
+    const env = await this.http.request<VendorsLeaderboardEnvelope>({
       method: "GET",
       path: "/vendors/leaderboard",
       ...(opts?.signal ? { signal: opts.signal } : {}),
     });
+    return env.vendors;
   }
 }
 
 class AnomaliesAPI {
   constructor(private readonly http: HttpClient) {}
 
-  /** GET /api/anomalies — paginated append-only event log. */
-  list(
+  /**
+   * GET /api/anomalies — paginated append-only event log. Returns the
+   * array directly; use {@link AnomaliesAPI.listPage} when you need
+   * `next_cursor` to drive pagination.
+   */
+  async list(
     params?: ListAnomaliesParams,
     opts?: { signal?: AbortSignal },
-  ): Promise<AnomaliesListResponse> {
-    return this.http.request<AnomaliesListResponse>({
+  ): Promise<AnomalyEvent[]> {
+    const env = await this.listPage(params, opts);
+    return env.events;
+  }
+
+  /**
+   * GET /api/anomalies — paginated list with the raw envelope, exposing
+   * `next_cursor` so callers can walk pages.
+   */
+  listPage(
+    params?: ListAnomaliesParams,
+    opts?: { signal?: AbortSignal },
+  ): Promise<AnomaliesListEnvelope> {
+    return this.http.request<AnomaliesListEnvelope>({
       method: "GET",
       path: "/api/anomalies",
       ...(params ? { query: params as Record<string, unknown> } : {}),

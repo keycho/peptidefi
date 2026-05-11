@@ -6,6 +6,11 @@
  *
  * If you need numbers, parse them at the call site — the SDK does not
  * coerce to avoid silent precision loss.
+ *
+ * Shapes verified against the live API. Internal envelope types
+ * (PeptidesListEnvelope, CyclesListEnvelope, etc.) describe the
+ * raw HTTP body; the SDK unwraps single-array envelopes before
+ * returning to the caller.
  */
 
 export type SolanaCluster = "mainnet-beta" | "devnet" | "testnet";
@@ -20,25 +25,31 @@ export interface SolanaRef {
 
 /* ─── /v1/peptides ────────────────────────────────────────────────── */
 
+export interface PeptideCurrentTwap {
+  twap_value: string;
+  computed_at: string;
+  solana_signature: string | null;
+  solana_slot: number | null;
+  cluster: SolanaCluster;
+  solscan_url: string | null;
+}
+
 export interface PeptideListItem {
   peptide_id: number;
   code: string;
   display_name: string;
   full_name: string;
   twap_commits_count: number;
-  current_twap: {
-    twap_value: string;
-    computed_at: string;
-    solana_signature: string | null;
-    solana_slot: number | null;
-    solscan_url: string | null;
-  } | null;
+  current_twap: PeptideCurrentTwap | null;
 }
 
-export interface PeptidesListResponse {
+/** Raw envelope returned by GET /v1/peptides; the SDK unwraps to `peptides`. */
+export interface PeptidesListEnvelope {
   peptides: PeptideListItem[];
   count: number;
 }
+
+/* ─── /v1/peptides/:id ────────────────────────────────────────────── */
 
 export interface PeptideDetail {
   peptide_id: number;
@@ -56,6 +67,7 @@ export interface PeptideTwapHistoryItem {
   window_end: string;
   observation_set_root: string;
   status: string;
+  cluster: SolanaCluster;
   solana: SolanaRef | null;
   finalized_at: string | null;
 }
@@ -69,26 +81,28 @@ export interface PeptideDetailResponse {
 /* ─── /v1/peptides/:code/vendor-prices ────────────────────────────── */
 
 export interface VendorPriceRow {
-  supplier_code: string;
-  supplier_display_name: string;
-  logo_url: string | null;
-  product_url: string | null;
+  vendor_name: string;
   price_usd_per_mg: string;
-  raw_price: string;
-  raw_currency: string;
-  availability_tier: string;
-  lead_time_days: number | null;
   observed_at: string;
-  observation_id: number;
-  spread_vs_twap_pct: string | null;
+}
+
+export interface VendorPricesTwap {
+  value_usd_per_mg: string;
+  computed_at: string;
+  cluster: SolanaCluster;
+}
+
+export interface VendorPricesSpread {
+  min: string;
+  max: string;
+  variance_pct: number;
 }
 
 export interface VendorPricesResponse {
   peptide_code: string;
-  twap_value: string | null;
-  twap_computed_at: string | null;
+  twap: VendorPricesTwap;
   vendors: VendorPriceRow[];
-  count: number;
+  spread: VendorPricesSpread;
 }
 
 /* ─── /v1/twaps/:id ───────────────────────────────────────────────── */
@@ -103,6 +117,7 @@ export interface TwapDetail {
   window_end: string;
   observation_set_root: string;
   status: string;
+  cluster: SolanaCluster;
   solana: SolanaRef | null;
   memo_payload: string;
   submitted_at: string | null;
@@ -115,7 +130,8 @@ export interface TwapDetail {
 /* ─── /v1/observations/:id ────────────────────────────────────────── */
 
 export interface ObservationCanonical {
-  observation_id: number;
+  /** The observation's primary key. Note: field name is `id`, not `observation_id`. */
+  id: number;
   supplier_id: number;
   peptide_id: number;
   supplier_product_id: number;
@@ -146,9 +162,14 @@ export interface ObservationCommitRef {
   explorer_url: string | null;
 }
 
+export interface MerkleProofStep {
+  position: "left" | "right";
+  hash: string;
+}
+
 export interface ObservationProof {
   merkle_root: string;
-  proof: Array<{ position: "left" | "right"; hash: string }>;
+  proof: MerkleProofStep[];
 }
 
 export interface ObservationDetailResponse {
@@ -168,12 +189,14 @@ export interface CycleSummary {
   observation_count: number;
   merkle_root: string;
   status: string | null;
+  cluster: SolanaCluster;
   solana: SolanaRef | null;
   submitted_at: string | null;
   finalized_at: string | null;
 }
 
-export interface CyclesListResponse {
+/** Raw envelope returned by GET /v1/cycles; the SDK unwraps to `cycles`. */
+export interface CyclesListEnvelope {
   cycles: CycleSummary[];
   next_cursor: number | null;
 }
@@ -220,7 +243,7 @@ export interface VerifyOnChain {
   block_time?: number | null;
   solscan_url?: string;
   explorer_url?: string;
-  /** Present on builds with the finalized→confirmed RPC fallback. */
+  /** Present when the API has the finalized→confirmed RPC fallback enabled. */
   commitment_used?: "finalized" | "confirmed";
 }
 
@@ -231,10 +254,10 @@ export interface VerifyObservationSuccess {
   leaf_index: number;
   leaf_hash: string;
   merkle_root: string;
-  proof: Array<{ position: "left" | "right"; hash: string }>;
+  proof: MerkleProofStep[];
   on_chain: VerifyOnChain;
   checks: VerifyCheck[];
-  /** Present on builds with the finalized→confirmed RPC fallback. */
+  /** Present when the API has the finalized→confirmed RPC fallback enabled. */
   verified_at_commitment?: "finalized" | "confirmed";
 }
 
@@ -251,7 +274,7 @@ export interface VerifyObservationFailure {
   retry_after_seconds?: number;
   checks: VerifyCheck[];
   on_chain?: Partial<VerifyOnChain>;
-  proof?: Array<{ position: "left" | "right"; hash: string }>;
+  proof?: MerkleProofStep[];
 }
 
 export type VerifyObservationResponse =
@@ -274,7 +297,8 @@ export interface VendorLeaderboardEntry {
   composite_score: string;
 }
 
-export interface VendorsLeaderboardResponse {
+/** Raw envelope returned by GET /vendors/leaderboard; the SDK unwraps to `vendors`. */
+export interface VendorsLeaderboardEnvelope {
   vendors: VendorLeaderboardEntry[];
 }
 
@@ -288,24 +312,27 @@ export interface AnomalyEvent {
   severity: AnomalySeverity;
   event_type: string;
   description: string;
-  service: string | null;
   vendor_id: string | null;
   peptide_id: string | null;
+  observation_id: number | null;
   cycle_id: number | null;
   context: Record<string, unknown> | null;
+  resolved_at: string | null;
+  resolved_by: string | null;
 }
 
-export interface AnomaliesListResponse {
+/** Raw envelope returned by GET /api/anomalies; the SDK unwraps to `events`. */
+export interface AnomaliesListEnvelope {
   events: AnomalyEvent[];
-  next_cursor: number | null;
+  /** Opaque composite cursor: `${timestamp}_${id}`. Pass back as `cursor`. */
+  next_cursor: string | null;
 }
 
 export interface ListAnomaliesParams {
   limit?: number;
-  cursor?: number;
+  cursor?: string;
   severity?: AnomalySeverity;
   event_type?: string;
-  service?: string;
   vendor_id?: string;
   peptide_id?: string;
   since?: string;

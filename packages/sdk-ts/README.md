@@ -8,6 +8,7 @@ Official TypeScript SDK for the [BioHash](https://biohash.network) public REST A
 - Dual ESM / CJS build
 - Automatic retries on 5xx and network errors with exponential backoff
 - Honors `Retry-After` on 429 responses
+- List methods unwrap the JSON envelope so you get the array directly
 
 ## Install
 
@@ -28,11 +29,11 @@ const client = new BioHash({
   baseUrl: "https://api.biohash.network", // default
 });
 
-// List every tracked peptide
-const { peptides } = await client.peptides.list();
+// List every tracked peptide (returns an array, not an envelope).
+const peptides = await client.peptides.list();
 console.log(peptides.map((p) => `${p.code} → ${p.current_twap?.twap_value ?? "(no twap)"}`));
 
-// Verify an observation against the on-chain Merkle commit
+// Verify an observation against the on-chain Merkle commit.
 const result = await client.verify.observation(12345);
 if (result.verified) {
   console.log(`✓ verified, merkle_root=${result.merkle_root}`);
@@ -78,19 +79,55 @@ setTimeout(() => ctrl.abort(), 5000);
 const peptides = await client.peptides.list({ signal: ctrl.signal });
 ```
 
+## Envelope unwrapping
+
+For list endpoints the SDK unwraps the JSON envelope and returns the inner array directly. The full envelope (with pagination cursors etc.) is still available via a parallel `.listPage()` method on paginated endpoints.
+
+| Method                       | Returns                          | Raw envelope via      |
+| ---------------------------- | -------------------------------- | --------------------- |
+| `peptides.list()`            | `PeptideListItem[]`              | — (single page)       |
+| `vendors.leaderboard()`      | `VendorLeaderboardEntry[]`       | — (single page)       |
+| `cycles.list(params?)`       | `CycleSummary[]`                 | `cycles.listPage()`   |
+| `cycles.get(id)`             | `CycleDetail`                    | — (single item)       |
+| `anomalies.list(params?)`    | `AnomalyEvent[]`                 | `anomalies.listPage()`|
+| `peptides.get(codeOrId)`     | `PeptideDetailResponse`          | — (multi-field)       |
+| `peptides.vendorPrices(code)`| `VendorPricesResponse`           | — (multi-field)       |
+| `observations.get(id)`       | `ObservationDetailResponse`      | — (multi-field)       |
+| `twaps.get(id)`              | `TwapDetail`                     | — (single item)       |
+| `verify.observation(id)`     | `VerifyObservationResponse`      | — (union)             |
+
 ## API reference
 
 ### `client.peptides`
 
-#### `peptides.list()` → `PeptidesListResponse`
-Hits `GET /v1/peptides`. Returns every active peptide and its most recent finalized TWAP commit.
+#### `peptides.list()` → `PeptideListItem[]`
+Hits `GET /v1/peptides`. Returns every active peptide and its most recent finalized TWAP commit, as an array.
 
 ```ts
-const { peptides, count } = await client.peptides.list();
+const peptides = await client.peptides.list();
+```
+
+Each item:
+```ts
+{
+  peptide_id: number;
+  code: string;
+  display_name: string;
+  full_name: string;
+  twap_commits_count: number;
+  current_twap: {
+    twap_value: string;
+    computed_at: string;
+    solana_signature: string | null;
+    solana_slot: number | null;
+    cluster: SolanaCluster;
+    solscan_url: string | null;
+  } | null;
+}
 ```
 
 #### `peptides.get(codeOrId)` → `PeptideDetailResponse`
-Hits `GET /v1/peptides/:id`. Accepts the stable peptide code (e.g. `"BPC157"`) or the numeric id. Returns the peptide plus the last 7 days of TWAP commits.
+Hits `GET /v1/peptides/:id`. Accepts the stable peptide code (e.g. `"BPC157"`) or the numeric id. Returns the peptide plus a window of TWAP commits.
 
 ```ts
 const detail = await client.peptides.get("BPC157");
@@ -100,10 +137,13 @@ for (const h of detail.twap_history) {
 ```
 
 #### `peptides.vendorPrices(code)` → `VendorPricesResponse`
-Hits `GET /v1/peptides/:code/vendor-prices`. Returns the freshest per-vendor price per active supplier alongside the current TWAP.
+Hits `GET /v1/peptides/:code/vendor-prices`. Returns the current TWAP, every recent per-vendor price, and the min/max/variance spread across vendors.
 
 ```ts
-const { vendors, twap_value } = await client.peptides.vendorPrices("BPC157");
+const { twap, vendors, spread } = await client.peptides.vendorPrices("BPC157");
+//   twap:    { value_usd_per_mg, computed_at, cluster }
+//   vendors: { vendor_name, price_usd_per_mg, observed_at }[]
+//   spread:  { min, max, variance_pct }
 ```
 
 ### `client.twaps`
@@ -119,24 +159,36 @@ console.log(twap.memo_payload, twap.solana?.solscan_url);
 ### `client.observations`
 
 #### `observations.get(observationId)` → `ObservationDetailResponse`
-Hits `GET /v1/observations/:id`. Returns the observation in canonical form, the leaf hash, the commit reference (if anchored), and a reproducible Merkle proof (if the cycle is finalized).
+Hits `GET /v1/observations/:id`. Returns the observation in canonical form (note: the row's PK is exposed as `id`, not `observation_id`), the leaf hash, the commit reference (if anchored), and a reproducible Merkle proof (if the cycle is finalized).
 
 ```ts
 const obs = await client.observations.get(987654);
+console.log(obs.observation.id);          // ← `id`, not observation_id
 console.log(obs.computed_leaf_hash);
 console.log(obs.proof?.merkle_root);
 ```
 
 ### `client.cycles`
 
-#### `cycles.list(params?)` → `CyclesListResponse`
-Hits `GET /v1/cycles`. Paginated by `cursor` (the previous response's `next_cursor`, which is the smallest `cycle_id` of the page).
+#### `cycles.list(params?)` → `CycleSummary[]`
+Hits `GET /v1/cycles`. Returns the array of cycles directly.
 
 ```ts
-const page1 = await client.cycles.list({ limit: 50, status: "finalized" });
-const page2 = page1.next_cursor !== null
-  ? await client.cycles.list({ limit: 50, cursor: page1.next_cursor })
-  : null;
+const cycles = await client.cycles.list({ limit: 50, status: "finalized" });
+```
+
+#### `cycles.listPage(params?)` → `CyclesListEnvelope`
+Same endpoint, but returns the raw envelope `{ cycles, next_cursor }` so you can drive cursor pagination.
+
+```ts
+let cursor: number | undefined = undefined;
+do {
+  const page = await client.cycles.listPage({ limit: 50, cursor, status: "finalized" });
+  for (const cycle of page.cycles) {
+    // ...
+  }
+  cursor = page.next_cursor ?? undefined;
+} while (cursor !== undefined);
 ```
 
 Params: `{ limit?: number; cursor?: number; status?: "pending" | "submitted" | "finalized" | "failed" | "all" }`.
@@ -145,8 +197,8 @@ Params: `{ limit?: number; cursor?: number; status?: "pending" | "submitted" | "
 Hits `GET /v1/cycles/:id`. Includes the full `memo_payload` plus every observation reference (leaf index + leaf hash).
 
 ```ts
-const cycle = await client.cycles.get(1165);
-console.log(cycle.observation_count, cycle.memo_payload);
+const cycle = await client.cycles.get(1259);
+console.log(cycle.observation_count, cycle.memo_payload, cycle.cluster);
 ```
 
 ### `client.verify`
@@ -169,17 +221,17 @@ if (result.verified === true) {
 
 ### `client.vendors`
 
-#### `vendors.leaderboard()` → `VendorsLeaderboardResponse`
-Hits `GET /vendors/leaderboard`. Returns every active vendor ranked by composite score (coverage, freshness, price vs TWAP).
+#### `vendors.leaderboard()` → `VendorLeaderboardEntry[]`
+Hits `GET /vendors/leaderboard`. Returns every active vendor ranked by composite score (coverage, freshness, price vs TWAP), as an array.
 
 ```ts
-const { vendors } = await client.vendors.leaderboard();
+const vendors = await client.vendors.leaderboard();
 ```
 
 ### `client.anomalies`
 
-#### `anomalies.list(params?)` → `AnomaliesListResponse`
-Hits `GET /api/anomalies`. Paginated append-only event log: TWAP submissions, vendor outages, scraper failures, on-chain commit lifecycle, etc.
+#### `anomalies.list(params?)` → `AnomalyEvent[]`
+Hits `GET /api/anomalies`. Returns the array of events directly.
 
 ```ts
 const events = await client.anomalies.list({
@@ -189,7 +241,21 @@ const events = await client.anomalies.list({
 });
 ```
 
-Params: `{ limit?; cursor?; severity?; event_type?; service?; vendor_id?; peptide_id?; since?; until? }`.
+#### `anomalies.listPage(params?)` → `AnomaliesListEnvelope`
+Same endpoint, with the raw envelope so you can paginate. `next_cursor` is an opaque string of the form `${timestamp}_${id}`; pass it back as the `cursor` param.
+
+```ts
+let cursor: string | undefined = undefined;
+do {
+  const page = await client.anomalies.listPage({ limit: 100, cursor });
+  for (const event of page.events) {
+    // ...
+  }
+  cursor = page.next_cursor ?? undefined;
+} while (cursor !== undefined);
+```
+
+Params: `{ limit?; cursor?: string; severity?; event_type?; vendor_id?; peptide_id?; since?; until? }`.
 
 ## Error handling
 
