@@ -16,6 +16,7 @@ import { getObservationHandler } from "./routes/v1/observations";
 import { getTwapHandler } from "./routes/v1/twaps";
 import { getPeptideVendorPricesHandler } from "./routes/v1/vendor-prices";
 import { verifyObservationHandler } from "./routes/v1/verify";
+import { getResearchHandler } from "./routes/v1/research";
 import {
   getAnomalyHandler,
   jsonFeedAnomaliesHandler,
@@ -267,6 +268,7 @@ export function buildApp(options: BuildAppOptions = {}): express.Express {
   app.get("/v1/observations/:id", cacheFor(3600), asyncRoute(getObservationHandler));
   app.get("/v1/twaps/:id", cacheFor(3600), asyncRoute(getTwapHandler));
   app.get("/v1/verify/observation/:id", cacheFor(3600), asyncRoute(verifyObservationHandler));
+  app.get("/v1/research/:code", cacheFor(300), asyncRoute(getResearchHandler));
 
   // ─── /api/anomalies — public append-only operational log ──────────
   // 60 req/min/IP per spec. The X-Admin-Token bypass lets our own
