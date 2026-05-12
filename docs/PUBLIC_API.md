@@ -220,6 +220,96 @@ comparison view.
 - **Rate limit**: 60/min/IP
 - **Cache**: `public, max-age=60`
 
+#### `GET /v1/research/:code`
+
+Peptide Research Index detail page. Combines curated scientific
+metadata (overview, mechanism, applications, sequence, MW, aliases,
+half-life note, storage note, disclaimer) with live BioHash pricing
+(current TWAP, 14-day history, current per-vendor prices) and a
+verification anchor (latest finalized commit cycle that contained
+an observation of this peptide).
+
+- **Rate limit**: 60/min/IP (inherits the wildcard `/v1/*` limit)
+- **Cache**: `public, max-age=300`
+- **Auth**: none — public GET, CORS `*`
+- **Path param**: `:code` — peptide code, normalised to upper-case.
+  Validated `^[A-Z0-9]{2,16}$`.
+- **Query**: `?cluster=` — optional; applies to pricing + verification
+  blocks. Accepts `mainnet` | `mainnet-beta` | `devnet` | `testnet`.
+
+The research surface is opt-in per peptide. A peptide code is
+"indexed" iff it has a row in `peptide_research_metadata` (seeded
+via migration 0039). Round-1 launch covers 5 peptides: BPC157,
+TB500, GHKCU, GLP1, TIRZEPATIDE. Other codes that exist in the
+peptides table but are not yet in the research index return 404
+NOT_FOUND so the page can grow incrementally without leaking
+skeleton entries.
+
+- **404 cases**:
+  - `peptide not found: <code>` — `:code` doesn't exist in the
+    `peptides` table.
+  - `peptide <code> exists but is not indexed in the research
+    surface` — peptide exists but has no `peptide_research_metadata`
+    row.
+
+Response shape (200):
+
+```json
+{
+  "peptide": {
+    "code": "BPC157",
+    "display_name": "BPC-157",
+    "full_name": "Body Protection Compound 157",
+    "aliases": ["Body Protection Compound 157", "BPC 157"],
+    "sequence": "GEPPPGKPADDAGLV",
+    "molecular_weight": 1419.53
+  },
+  "research": {
+    "overview": "BPC-157 (Body Protection Compound 157) is a synthetic 15-amino-acid peptide ...",
+    "mechanism": "Studies suggest BPC-157 may interact with the nitric oxide (NO) signaling pathway ...",
+    "applications": [
+      "Tendon and ligament repair research",
+      "Gastrointestinal mucosal research",
+      "Vascular and angiogenesis models",
+      "Soft-tissue injury research"
+    ],
+    "half_life_estimate": "Half-life in rodent serum has been reported in the ~30 minute range ...",
+    "storage": "Lyophilized powder typically stored at -20°C ...",
+    "pubmed_citation_count_estimate": 400,
+    "disclaimer": "For research and informational purposes only. Not medical advice. Not for human consumption unless prescribed by a licensed physician."
+  },
+  "pricing": {
+    "current_twap": {
+      "twap_value": "6.699",
+      "computed_at": "2026-05-11T15:00:00+00:00",
+      "solana_signature": "5j9q3mdfBVqAn4Fph39pRivDx...",
+      "solana_slot": 419063387,
+      "cluster": "mainnet-beta",
+      "solscan_url": "https://solscan.io/tx/5j9q3mdfBVqAn4Fph39pRivDx..."
+    },
+    "twap_history": [
+      { "twap_id": "...", "twap_value": "6.699", "computed_at": "...", "window_start": "...", "window_end": "...", "observation_set_root": "0x...", "status": "finalized", "cluster": "mainnet-beta", "solana": { ... }, "finalized_at": "..." }
+    ],
+    "vendor_count": 6,
+    "vendors": [
+      { "vendor_name": "Pure Health Peptides", "price_usd_per_mg": "3.633333", "observed_at": "..." }
+    ]
+  },
+  "verification": {
+    "latest_cycle_id": 1259,
+    "latest_solana_signature": "3fZ17fX4nUtFiH7bYa4HTjpgd...",
+    "verified_at_commitment": "finalized",
+    "solscan_url": "https://solscan.io/tx/3fZ17fX4nUtFiH7bYa4HTjpgd..."
+  }
+}
+```
+
+The `verification.*` block is best-effort metadata. If `commit_cycles`
+lookup fails or no observation has been anchored yet, the four
+fields return `null` rather than 500. `verified_at_commitment` is
+always `"finalized"` when populated — the research surface only
+anchors against finalized cycles.
+
 ### Cycles / observations / TWAPs (verification layer)
 
 #### `GET /v1/cycles`
