@@ -1,11 +1,11 @@
-import { sleepInterruptible } from "@peptide-oracle/shared";
-import type { SqlClient } from "../db/client";
+import { sleepInterruptible } from '@peptide-oracle/shared';
+import type { SqlClient } from '../db/client';
 import {
   fetchTwapInputObservations,
   findEligibleTwapForCommit,
   listActivePeptides,
-} from "../db/twap-detection";
-import { registerTwapCommit } from "../db/twap-commit-writer";
+} from '../db/twap-detection';
+import { registerTwapCommit } from '../db/twap-commit-writer';
 import {
   findNextPendingTwap,
   findNextSubmittedTwap,
@@ -13,19 +13,19 @@ import {
   markFinalizedTwap,
   markSubmittedTwap,
   resetToPendingTwap,
-} from "../db/twap-state";
-import type { OracleHealthState } from "../health";
-import { isFinalized, type OracleSolanaClient } from "../solana/client";
-import { classifyError, type ErrorClass } from "../solana/errors";
-import {
-  IN_FLIGHT_MAX_RETRIES,
-  nextInFlightBackoff,
-} from "../solana/retry-policy";
-import type { Keypair } from "@solana/web3.js";
-import { buildSignedMemoTx } from "../solana/memo-tx";
-import { buildTwapCommit } from "../twap/memo";
-import type { PegPusher } from "../peg/peg-pusher";
-import { logAnomaly } from "@peptide-oracle/shared";
+  setTwapIpfsCid,
+} from '../db/twap-state';
+import type { OracleHealthState } from '../health';
+import { isFinalized, type OracleSolanaClient } from '../solana/client';
+import { classifyError, type ErrorClass } from '../solana/errors';
+import { IN_FLIGHT_MAX_RETRIES, nextInFlightBackoff } from '../solana/retry-policy';
+import type { Keypair } from '@solana/web3.js';
+import { buildSignedMemoTx } from '../solana/memo-tx';
+import { buildTwapCommit } from '../twap/memo';
+import type { PegPusher } from '../peg/peg-pusher';
+import { logAnomaly } from '@peptide-oracle/shared';
+import { isPinataConfigured, pinCycleToIPFS } from '../ipfs/pinata';
+import { buildCycleManifest } from '../ipfs/manifest-builder';
 
 /**
  * TWAP commit poller — Phase D scope (§3.3).
@@ -72,7 +72,7 @@ export interface TwapPollerOptions {
    */
   hourSkewMinutes?: number;
   /** Solana cluster stamped on every twap_commits row this poller writes. */
-  cluster: "devnet" | "mainnet-beta" | "testnet";
+  cluster: 'devnet' | 'mainnet-beta' | 'testnet';
   /**
    * Optional peg-pusher hook. When provided, invoked best-effort
    * after each TWAP commit reaches 'finalized' status. Push failures
@@ -86,8 +86,8 @@ export async function runTwapPoller(opts: TwapPollerOptions): Promise<void> {
   const skew = opts.hourSkewMinutes ?? 0.5;
   console.log(
     `[twap-poller] started (tick=${opts.tickIntervalMs}ms, ` +
-      `enqueue at HH:${String(Math.floor(skew)).padStart(2, "0")}:` +
-      `${String(Math.round((skew % 1) * 60)).padStart(2, "0")} UTC)`,
+      `enqueue at HH:${String(Math.floor(skew)).padStart(2, '0')}:` +
+      `${String(Math.round((skew % 1) * 60)).padStart(2, '0')} UTC)`,
   );
 
   // The poller's primary job is the per-hour enqueue. Track the
@@ -113,7 +113,7 @@ export async function runTwapPoller(opts: TwapPollerOptions): Promise<void> {
     if (opts.abortSignal.aborted) break;
     await sleepInterruptible(opts.tickIntervalMs, opts.abortSignal);
   }
-  console.log("[twap-poller] shutdown");
+  console.log('[twap-poller] shutdown');
 }
 
 interface TickState {
@@ -122,10 +122,7 @@ interface TickState {
   setLastEnqueued: (ms: number) => void;
 }
 
-async function tick(
-  opts: TwapPollerOptions,
-  state: TickState,
-): Promise<void> {
+async function tick(opts: TwapPollerOptions, state: TickState): Promise<void> {
   // 1. Reconcile in-flight TWAP commits.
   await reconcileInFlight(opts);
   if (opts.abortSignal.aborted) return;
@@ -139,10 +136,7 @@ async function tick(
   // row hasn't been committed yet.
   const now = new Date();
   const hourBoundary = mostRecentEnqueueDeadline(now, state.skewMinutes);
-  if (
-    hourBoundary &&
-    hourBoundary.getTime() > state.lastEnqueuedHourBoundaryMs
-  ) {
+  if (hourBoundary && hourBoundary.getTime() > state.lastEnqueuedHourBoundaryMs) {
     await enqueueHourly(opts, hourBoundary);
     state.setLastEnqueued(hourBoundary.getTime());
   }
@@ -160,10 +154,7 @@ async function tick(
  *   now=12:30:00 → returns 12:00:00 (still in the same window)
  *   now=13:00:31 → returns 13:00:00 (process the 12:00→13:00 hour)
  */
-export function mostRecentEnqueueDeadline(
-  now: Date,
-  skewMinutes: number,
-): Date | null {
+export function mostRecentEnqueueDeadline(now: Date, skewMinutes: number): Date | null {
   const skewMs = skewMinutes * 60_000;
   // Round down to the start of the current UTC hour.
   const hourStart = new Date(now);
@@ -189,6 +180,7 @@ async function reconcileInFlight(opts: TwapPollerOptions): Promise<void> {
     retry_count,
     twap_value,
     observation_set_root,
+    computed_at,
   } = inFlight;
   let status;
   try {
@@ -214,15 +206,21 @@ async function reconcileInFlight(opts: TwapPollerOptions): Promise<void> {
       confirmed_slot: attestation.confirmed_slot,
     });
     opts.health.twap.last_commit_at = new Date().toISOString();
-    opts.health.twap.in_flight_count = Math.max(
-      0,
-      opts.health.twap.in_flight_count - 1,
-    );
+    opts.health.twap.in_flight_count = Math.max(0, opts.health.twap.in_flight_count - 1);
     console.log(
       `[twap-poller] peptide=${peptide_code} FINALIZED slot=${slot} ` +
-        `confirmed_slot=${attestation.confirmed_slot ?? "null"} ` +
+        `confirmed_slot=${attestation.confirmed_slot ?? 'null'} ` +
         `sig=${solana_signature}`,
     );
+    pinToIpfsBestEffort(opts, {
+      id,
+      peptide_code,
+      computed_at,
+      twap_value,
+      observation_set_root,
+      solana_signature,
+      solana_slot: slot,
+    });
     await invokePegPusherBestEffort(opts, {
       peptide_code,
       twap_value,
@@ -234,14 +232,12 @@ async function reconcileInFlight(opts: TwapPollerOptions): Promise<void> {
 
   if (status?.err !== null && status?.err !== undefined) {
     const errMsg = JSON.stringify(status.err);
-    console.warn(
-      `[twap-poller] peptide=${peptide_code} tx error: ${errMsg}`,
-    );
+    console.warn(`[twap-poller] peptide=${peptide_code} tx error: ${errMsg}`);
     await handlePostSubmitFailure(opts, {
       id,
       peptide_code,
       retry_count,
-      lastErrorClass: "INVALID_TRANSACTION",
+      lastErrorClass: 'INVALID_TRANSACTION',
       lastErrorMessage: `tx_error: ${errMsg}`,
       orphanedSignature: solana_signature,
     });
@@ -269,14 +265,20 @@ async function reconcileInFlight(opts: TwapPollerOptions): Promise<void> {
       confirmed_slot: attestation.confirmed_slot,
     });
     opts.health.twap.last_commit_at = new Date().toISOString();
-    opts.health.twap.in_flight_count = Math.max(
-      0,
-      opts.health.twap.in_flight_count - 1,
-    );
+    opts.health.twap.in_flight_count = Math.max(0, opts.health.twap.in_flight_count - 1);
     console.log(
       `[twap-poller] peptide=${peptide_code} FINALIZED (late) slot=${slot} ` +
-        `confirmed_slot=${attestation.confirmed_slot ?? "null"}`,
+        `confirmed_slot=${attestation.confirmed_slot ?? 'null'}`,
     );
+    pinToIpfsBestEffort(opts, {
+      id,
+      peptide_code,
+      computed_at,
+      twap_value,
+      observation_set_root,
+      solana_signature,
+      solana_slot: slot,
+    });
     await invokePegPusherBestEffort(opts, {
       peptide_code,
       twap_value,
@@ -294,7 +296,7 @@ async function reconcileInFlight(opts: TwapPollerOptions): Promise<void> {
     id,
     peptide_code,
     retry_count,
-    lastErrorClass: "CONFIRMATION_TIMEOUT",
+    lastErrorClass: 'CONFIRMATION_TIMEOUT',
     lastErrorMessage: `dropped (orphan sig=${solana_signature})`,
     orphanedSignature: solana_signature,
   });
@@ -314,7 +316,7 @@ async function submitOnePending(opts: TwapPollerOptions): Promise<void> {
     );
     await markFailedTwap(opts.sql, {
       id: pending.id,
-      last_error: pending.last_error ?? "in-flight retry budget exhausted",
+      last_error: pending.last_error ?? 'in-flight retry budget exhausted',
       incrementRetry: false,
     });
     return;
@@ -323,9 +325,7 @@ async function submitOnePending(opts: TwapPollerOptions): Promise<void> {
   // §3.5.2 / §3.7.3 balance gate.
   let balanceLamports: number;
   try {
-    balanceLamports = await opts.solana.getBalanceLamports(
-      opts.payer.publicKey.toBase58(),
-    );
+    balanceLamports = await opts.solana.getBalanceLamports(opts.payer.publicKey.toBase58());
   } catch (err) {
     const cls = classifyError(err);
     console.warn(
@@ -355,9 +355,7 @@ async function submitOnePending(opts: TwapPollerOptions): Promise<void> {
     blockhash = await opts.solana.getLatestBlockhash();
   } catch (err) {
     const cls = classifyError(err);
-    console.warn(
-      `[twap-poller] getLatestBlockhash failed (${cls.class}): ${cls.message}`,
-    );
+    console.warn(`[twap-poller] getLatestBlockhash failed (${cls.class}): ${cls.message}`);
     return;
   }
 
@@ -372,8 +370,8 @@ async function submitOnePending(opts: TwapPollerOptions): Promise<void> {
       cuLimit: 150_000,
     });
     priorityFee = await opts.solana.getPriorityFeeEstimateMicroLamports(
-      Buffer.from(draft.serialized).toString("base64"),
-      "High",
+      Buffer.from(draft.serialized).toString('base64'),
+      'High',
     );
   } catch (err) {
     console.warn(
@@ -397,8 +395,7 @@ async function submitOnePending(opts: TwapPollerOptions): Promise<void> {
   } catch (err) {
     const cls = classifyError(err);
     console.error(
-      `[twap-poller] id=${pending.id} build/sign failed ` +
-        `(${cls.class}): ${cls.message}`,
+      `[twap-poller] id=${pending.id} build/sign failed ` + `(${cls.class}): ${cls.message}`,
     );
     await markFailedTwap(opts.sql, {
       id: pending.id,
@@ -434,11 +431,10 @@ async function submitOnePending(opts: TwapPollerOptions): Promise<void> {
   } catch (err) {
     const cls = classifyError(err);
     console.warn(
-      `[twap-poller] id=${pending.id} sendTransaction failed ` +
-        `(${cls.class}): ${cls.message}`,
+      `[twap-poller] id=${pending.id} sendTransaction failed ` + `(${cls.class}): ${cls.message}`,
     );
 
-    if (cls.class === "BLOCKHASH_EXPIRED") {
+    if (cls.class === 'BLOCKHASH_EXPIRED') {
       opts.solana.invalidateBlockhash();
       await resetToPendingTwap(opts.sql, {
         id: pending.id,
@@ -447,7 +443,7 @@ async function submitOnePending(opts: TwapPollerOptions): Promise<void> {
       });
       return;
     }
-    if (cls.class === "INSUFFICIENT_SOL") {
+    if (cls.class === 'INSUFFICIENT_SOL') {
       await markFailedTwap(opts.sql, {
         id: pending.id,
         last_error: `INSUFFICIENT_SOL at submit: ${cls.message}`,
@@ -455,7 +451,7 @@ async function submitOnePending(opts: TwapPollerOptions): Promise<void> {
       });
       return;
     }
-    if (cls.class === "INVALID_TRANSACTION") {
+    if (cls.class === 'INVALID_TRANSACTION') {
       await markFailedTwap(opts.sql, {
         id: pending.id,
         last_error: `INVALID_TRANSACTION at submit: ${cls.message}`,
@@ -470,10 +466,7 @@ async function submitOnePending(opts: TwapPollerOptions): Promise<void> {
 
 // ─── Step 3: Hourly enqueue ────────────────────────────────────────────
 
-async function enqueueHourly(
-  opts: TwapPollerOptions,
-  hourBoundary: Date,
-): Promise<void> {
+async function enqueueHourly(opts: TwapPollerOptions, hourBoundary: Date): Promise<void> {
   const peptides = await listActivePeptides(opts.sql);
   if (peptides.length === 0) {
     console.log(
@@ -531,7 +524,7 @@ async function enqueueHourly(
         console.log(
           `[twap-poller] enqueued peptide=${eligible.peptide_code} ` +
             `computed_at=${eligible.computed_at.toISOString()} ` +
-            `root=${observationSetRootHex} memo_bytes=${Buffer.byteLength(memo, "utf-8")}`,
+            `root=${observationSetRootHex} memo_bytes=${Buffer.byteLength(memo, 'utf-8')}`,
         );
       } else {
         skippedAlreadyCommitted += 1;
@@ -539,9 +532,7 @@ async function enqueueHourly(
     } catch (err) {
       errored += 1;
       const msg = err instanceof Error ? err.message : String(err);
-      console.error(
-        `[twap-poller] enqueue peptide=${peptide.peptide_code} failed: ${msg}`,
-      );
+      console.error(`[twap-poller] enqueue peptide=${peptide.peptide_code} failed: ${msg}`);
     }
   }
 
@@ -569,30 +560,22 @@ async function handlePostSubmitFailure(
 ): Promise<void> {
   const decision = nextInFlightBackoff(args.retry_count, args.lastErrorClass);
   const auditMsg =
-    `${args.lastErrorClass}: ${args.lastErrorMessage} ` +
-    `(orphan_sig=${args.orphanedSignature})`;
+    `${args.lastErrorClass}: ${args.lastErrorMessage} ` + `(orphan_sig=${args.orphanedSignature})`;
 
-  if (
-    args.lastErrorClass === "INSUFFICIENT_SOL" ||
-    args.lastErrorClass === "INVALID_TRANSACTION"
-  ) {
+  if (args.lastErrorClass === 'INSUFFICIENT_SOL' || args.lastErrorClass === 'INVALID_TRANSACTION') {
     await markFailedTwap(opts.sql, {
       id: args.id,
       last_error: auditMsg,
       incrementRetry: true,
     });
-    opts.health.twap.in_flight_count = Math.max(
-      0,
-      opts.health.twap.in_flight_count - 1,
-    );
+    opts.health.twap.in_flight_count = Math.max(0, opts.health.twap.in_flight_count - 1);
     void logAnomaly({
-      severity:
-        args.lastErrorClass === "INSUFFICIENT_SOL" ? "critical" : "error",
-      eventType: "oracle_commit_failed",
+      severity: args.lastErrorClass === 'INSUFFICIENT_SOL' ? 'critical' : 'error',
+      eventType: 'oracle_commit_failed',
       description: `TWAP commit terminally failed (${args.lastErrorClass}) for ${args.peptide_code}: ${args.lastErrorMessage}`,
       peptideId: args.peptide_code,
       context: {
-        component: "twap-poller",
+        component: 'twap-poller',
         twap_commit_id: args.id,
         error_class: args.lastErrorClass,
         error_message: args.lastErrorMessage,
@@ -609,21 +592,18 @@ async function handlePostSubmitFailure(
       last_error: auditMsg,
       incrementRetry: true,
     });
-    opts.health.twap.in_flight_count = Math.max(
-      0,
-      opts.health.twap.in_flight_count - 1,
-    );
+    opts.health.twap.in_flight_count = Math.max(0, opts.health.twap.in_flight_count - 1);
     console.warn(
       `[twap-poller] id=${args.id} (peptide=${args.peptide_code}) retry ` +
         `budget exhausted; failed`,
     );
     void logAnomaly({
-      severity: "error",
-      eventType: "oracle_commit_failed",
+      severity: 'error',
+      eventType: 'oracle_commit_failed',
       description: `TWAP commit retry budget exhausted for ${args.peptide_code} (${IN_FLIGHT_MAX_RETRIES} attempts): ${args.lastErrorClass}`,
       peptideId: args.peptide_code,
       context: {
-        component: "twap-poller",
+        component: 'twap-poller',
         twap_commit_id: args.id,
         error_class: args.lastErrorClass,
         error_message: args.lastErrorMessage,
@@ -640,10 +620,7 @@ async function handlePostSubmitFailure(
     last_error: auditMsg,
     incrementRetry: decision.countAgainstBudget,
   });
-  opts.health.twap.in_flight_count = Math.max(
-    0,
-    opts.health.twap.in_flight_count - 1,
-  );
+  opts.health.twap.in_flight_count = Math.max(0, opts.health.twap.in_flight_count - 1);
 }
 
 // ─── Peg-pusher hook ───────────────────────────────────────────────
@@ -666,6 +643,67 @@ interface PegPushArgs {
  * trigger's behaviour observable without DB access. The pusher's
  * own metrics() also surfaces the same outcome via /health.
  */
+/**
+ * Fire-and-forget IPFS pin of the finalized TWAP commit's manifest.
+ *
+ * Pattern (mirroring invokePegPusherBestEffort below):
+ *   - Skipped entirely when PINATA_JWT is unset (isPinataConfigured()
+ *     emits a one-time warning so operators can see why ipfs_cid is
+ *     null in the DB).
+ *   - Manifest build + pin run on a detached promise. Errors are
+ *     caught + logged; they never propagate back to the poller.
+ *   - On success, twap_commits.ipfs_cid is updated. On failure, the
+ *     row stays solana-finalized + ipfs_cid=null. Future retry queue
+ *     (out of scope here) can sweep null CIDs later.
+ *
+ * Critically: this function returns void synchronously (no await on
+ * the inner promise). A misbehaving Pinata API CANNOT slow down the
+ * oracle's reconcile loop or block the next finalize.
+ */
+interface PinIpfsArgs {
+  id: string;
+  peptide_code: string;
+  computed_at: Date;
+  twap_value: string;
+  observation_set_root: string;
+  solana_signature: string;
+  solana_slot: number;
+}
+
+function pinToIpfsBestEffort(opts: TwapPollerOptions, args: PinIpfsArgs): void {
+  if (!isPinataConfigured()) return;
+  // Detach the chain; no await. Errors caught below — they never
+  // reach the poller's tick handler.
+  void (async () => {
+    try {
+      const manifest = await buildCycleManifest(opts.sql, {
+        peptide_code: args.peptide_code,
+        computed_at: args.computed_at,
+        twap_value: args.twap_value,
+        observation_set_root: args.observation_set_root,
+        solana_signature: args.solana_signature,
+        solana_slot: args.solana_slot,
+      });
+      const { cid, size } = await pinCycleToIPFS(manifest);
+      const updated = await setTwapIpfsCid(opts.sql, { id: args.id, cid });
+      if (updated === 0) {
+        console.warn(
+          `[ipfs] pin id=${args.id} peptide=${args.peptide_code} cid=${cid} ` +
+            `but row update affected 0 rows (already had a CID? id wrong?)`,
+        );
+      } else {
+        console.log(
+          `[ipfs] pinned id=${args.id} peptide=${args.peptide_code} ` + `cid=${cid} size=${size}B`,
+        );
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`[ipfs] pin failed id=${args.id} peptide=${args.peptide_code}: ${msg}`);
+      // Future: enqueue for retry. v1: log + skip per spec.
+    }
+  })();
+}
+
 async function invokePegPusherBestEffort(
   opts: TwapPollerOptions,
   args: PegPushArgs,
@@ -730,21 +768,19 @@ function parseTwapToBaseUnits(twap: string): bigint {
   if (!match) {
     throw new Error(`invalid twap value (not numeric(20,6) string): ${twap}`);
   }
-  const intPart = match[1] ?? "0";
-  const fracPart = (match[2] ?? "").padEnd(6, "0").slice(0, 6);
-  const stripped = (intPart + fracPart).replace(/^0+(?=\d)/, "");
-  return BigInt(stripped || "0");
+  const intPart = match[1] ?? '0';
+  const fracPart = (match[2] ?? '').padEnd(6, '0').slice(0, 6);
+  const stripped = (intPart + fracPart).replace(/^0+(?=\d)/, '');
+  return BigInt(stripped || '0');
 }
 
 /**
  * Decode "0x" + 64 hex into a 32-byte Uint8Array.
  */
 function hexToBytes32(hex: string): Uint8Array {
-  const clean = hex.startsWith("0x") || hex.startsWith("0X") ? hex.slice(2) : hex;
+  const clean = hex.startsWith('0x') || hex.startsWith('0X') ? hex.slice(2) : hex;
   if (clean.length !== 64 || !/^[0-9a-fA-F]+$/.test(clean)) {
-    throw new Error(
-      `invalid observation_set_root (expected "0x" + 64 hex, got "${hex}")`,
-    );
+    throw new Error(`invalid observation_set_root (expected "0x" + 64 hex, got "${hex}")`);
   }
   const bytes = new Uint8Array(32);
   for (let i = 0; i < 32; i++) {

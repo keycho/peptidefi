@@ -390,6 +390,83 @@ fields return `null` rather than 500. `verified_at_commitment` is
 always `"finalized"` when populated — the research surface only
 anchors against finalized cycles.
 
+### IPFS audit trail (`ipfs_cid`)
+
+Every finalized TWAP commit carries an `ipfs_cid` field on the wire
+(nullable). When non-null, the CID points to a content-addressed
+manifest of the full observation set + per-observation deviation
+metric + Solana attestation that produced the commit. The manifest
+is fetchable from any IPFS gateway:
+
+```
+https://ipfs.io/ipfs/{cid}
+https://gateway.pinata.cloud/ipfs/{cid}
+```
+
+Relationship to the Solana signature:
+
+| Anchor                | Records                                   | Cost            | Re-fetchable     |
+| --------------------- | ----------------------------------------- | --------------- | ---------------- |
+| `solana_signature`    | TWAP value + observation_set_root         | On-chain (Memo) | Yes (Solscan)    |
+| `ipfs_cid`            | Full observation set + deviation metric   | Off-chain pin   | Yes (any gateway)|
+
+The Solana commitment is the canonical "this happened at this slot"
+signal; the IPFS manifest is the audit-trail-quality detail any
+verifier needs to recompute the merkle root from raw inputs.
+
+`ipfs_cid` is `null` when:
+- The oracle's `PINATA_JWT` is unset (pinning disabled by config); or
+- A pin attempt failed and has not yet been retried (no backfill in v1).
+
+In both cases the Solana commit is still authoritative — the IPFS
+layer is additive, not blocking.
+
+**Manifest schema (version 1.0)**:
+
+```jsonc
+{
+  "version": "1.0",
+  "peptide_code": "BPC157",
+  "cycle_id": 4242,
+  "computed_at": "2026-05-13T18:00:00.000Z",
+  "twap_value": 6.6990,
+  "twap_unit": "USD/mg",
+  "algorithm": "filtered_median_v1",
+  "merkle_root": "0x...",
+  "solana_signature": "3tYeH9w...",
+  "solana_slot": 419467611,
+  "observations": [
+    {
+      "vendor_code": "PUREHEALTH",
+      "vendor_url": "https://...",
+      "raw_price_usd": 18.0,
+      "pack_size_mg": 5,
+      "price_usd_per_mg": 3.6,
+      "observed_at": "2026-05-13T17:55:00.000Z",
+      "included_in_twap": true,
+      "exclusion_reason": null,
+      "deviation_from_median_bps": 4612
+    }
+    // ... one entry per supplier_observation in the input + dropped sets
+  ]
+}
+```
+
+`deviation_from_median_bps` is `round(|price − twap_value| / twap_value × 10_000)`,
+matching the metric used by the worker's filtered_median_v1 algorithm
+(`apps/worker/src/twap.ts#maxDeviationBps`). Null when `twap_value` is
+zero (degenerate prices). Surfaced per-observation so an auditor can
+see the spread of every input — kept or dropped — without having to
+recompute.
+
+`exclusion_reason` is `null` for observations that fed the TWAP and
+the literal string `"excluded_by_filtered_median_v1"` for any
+observations dropped by the worker's outlier filter. Today's
+`filtered_median_v1` is a straight median (no filtering), so
+`included_in_twap` is currently always `true` in production — the
+manifest schema captures the dropped-row case ahead of time so we
+don't have to bump version when MAD-based filtering ships.
+
 ### Cycles / observations / TWAPs (verification layer)
 
 #### `GET /v1/cycles`
