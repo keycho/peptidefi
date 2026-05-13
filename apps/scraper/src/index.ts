@@ -55,10 +55,11 @@ import { getProxyDiagnostics } from "./suppliers/woocommerce";
       description: `scraper proxy: enabled=${diag.proxy_enabled} has_api_key=${diag.has_api_key}`,
       context: {
         ...diag,
-        // List of WC-via-proxy vendors. Hardcoded here (rather than
-        // imported from suppliers/index) to avoid a circular import
-        // at startup; matches the 7 createWooModule() entries.
-        // CAYMAN is omitted (paused, doesn't use the proxy path).
+        // List of WC vendors registered through the proxy-aware path.
+        // Hardcoded here (rather than imported from suppliers/index)
+        // to avoid a circular import at startup; matches the active
+        // createWooModule() entries. CAYMAN is omitted (paused,
+        // doesn't use the proxy path).
         vendors_via_proxy: [
           "PUREHEALTH",
           "NUSCIENCE",
@@ -71,6 +72,12 @@ import { getProxyDiagnostics } from "./suppliers/woocommerce";
           "PANDA",
           "PURETESTED",
           "PEPTIDELABS",
+          // Added in migration 0040. Both reach the public IP from
+          // datacenter (no proxy strictly required) but stay in the
+          // same WC module path; included so the startup audit event
+          // tracks the full registered set.
+          "EZPEP",
+          "OPTIPEP",
         ],
       },
     });

@@ -74,6 +74,13 @@ export const SUPPLIERS: Partial<Record<string, SupplierModule>> = {
   PANDA:       createWooModule({ supplierCode: "PANDA",       host: "pandapeptides.com" }),
   PURETESTED:  createWooModule({ supplierCode: "PURETESTED",  host: "www.puretestedpeptides.com" }),
   PEPTIDELABS: createWooModule({ supplierCode: "PEPTIDELABS", host: "peptidelabsinc.com" }),
+  // Added in migration 0040. Both vanilla WC; reachable from datacenter
+  // IPs (no proxy needed). EZPEP is pinned to ezpeptides.com — impostor
+  // domains ezpeps.com / ezpeptidesofficial.com exist and must not be
+  // confused with the canonical vendor. enabled_in_twap=false on both
+  // pending the operator's quality-review window.
+  EZPEP:      createWooModule({ supplierCode: "EZPEP",      host: "ezpeptides.com" }),
+  OPTIPEP:    createWooModule({ supplierCode: "OPTIPEP",    host: "optimalpep.com" }),
 };
 
 const stubModule: SupplierModule = {
