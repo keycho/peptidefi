@@ -105,6 +105,50 @@ export interface VendorPricesResponse {
   spread: VendorPricesSpread;
 }
 
+/* ─── /v1/peptides/:code/price-history ────────────────────────────── */
+
+export type PriceHistoryAggregation = "daily" | "hourly";
+
+export interface PriceHistoryParams {
+  /** Window length in days. 1..90, default 14. */
+  days?: number;
+  /** Bucket aggregation. Default `"daily"`. */
+  aggregation?: PriceHistoryAggregation;
+  /** Optional supplier code (e.g. `"PUREHEALTH"`) to narrow the response. */
+  vendor?: string;
+}
+
+export interface VendorPricePoint {
+  /** ISO 8601 UTC bucket-start timestamp. */
+  timestamp: string;
+  /** Average price across all observations in the bucket. */
+  price_usd_per_mg: number;
+  /** Number of observations that contributed to the bucket. */
+  observation_count: number;
+}
+
+export interface VendorPriceSeries {
+  vendor_code: string;
+  vendor_display_name: string;
+  points: VendorPricePoint[];
+}
+
+export interface TwapHistoryPoint {
+  timestamp: string;
+  twap_value_usd_per_mg: number;
+  cycle_count: number;
+}
+
+export interface PeptidePriceHistoryResponse {
+  peptide_code: string;
+  peptide_display_name: string;
+  window_start: string;
+  window_end: string;
+  aggregation: PriceHistoryAggregation;
+  vendors: VendorPriceSeries[];
+  twap_series: TwapHistoryPoint[];
+}
+
 /* ─── /v1/twaps/:id ───────────────────────────────────────────────── */
 
 export interface TwapDetail {

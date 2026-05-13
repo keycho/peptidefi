@@ -45,7 +45,7 @@ const DEFAULT_BASE_URL = "https://api.biohash.network";
 const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_MAX_RETRIES = 3;
 const DEFAULT_RETRY_BACKOFF_MS = 250;
-const SDK_VERSION = "0.1.0";
+const SDK_VERSION = "0.2.0";
 
 interface ResolvedOptions {
   baseUrl: string;

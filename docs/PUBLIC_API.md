@@ -220,6 +220,86 @@ comparison view.
 - **Rate limit**: 60/min/IP
 - **Cache**: `public, max-age=60`
 
+#### `GET /v1/peptides/:code/price-history`
+
+Per-vendor price history over a configurable window, plus the TWAP
+series for the same window. Powers historical-trajectory views
+(e.g. BioHash Oracle Lab) and downstream analytics. Aggregation is
+JS-side over `supplier_observations`; PostgREST does not surface
+Postgres `date_trunc` grouping.
+
+- **Rate limit**: 60/min/IP (inherits the wildcard `/v1/*` limit)
+- **Cache**: `public, max-age=300, s-maxage=300`
+- **Auth**: none — public GET, CORS `*`
+- **Path param**: `:code` — peptide code, normalised to upper-case.
+  Validated `^[A-Z0-9]{2,16}$`.
+- **Query**:
+  - `?days=` — integer 1..90, default 14
+  - `?aggregation=` — `daily` (default) | `hourly`
+  - `?vendor=` — optional supplier code (e.g. `PUREHEALTH`).
+    Validated `^[A-Z0-9_]{2,32}$`.
+
+**404 cases**:
+- `peptide not found: <code>` — `:code` doesn't exist
+- `vendor not found: <code>` — `?vendor=` doesn't match any
+  `suppliers.code`
+
+Response shape (200):
+
+```json
+{
+  "peptide_code": "BPC157",
+  "peptide_display_name": "BPC-157",
+  "window_start": "2026-04-29T11:51:00.000Z",
+  "window_end": "2026-05-13T11:51:00.000Z",
+  "aggregation": "daily",
+  "vendors": [
+    {
+      "vendor_code": "GENETIC",
+      "vendor_display_name": "Genetic Peptide",
+      "points": [
+        { "timestamp": "2026-04-29T00:00:00.000Z", "price_usd_per_mg": 11.0, "observation_count": 4 },
+        { "timestamp": "2026-04-30T00:00:00.000Z", "price_usd_per_mg": 11.0, "observation_count": 4 }
+      ]
+    },
+    {
+      "vendor_code": "PUREHEALTH",
+      "vendor_display_name": "Pure Health Peptides",
+      "points": [
+        { "timestamp": "2026-04-29T00:00:00.000Z", "price_usd_per_mg": 3.633, "observation_count": 4 }
+      ]
+    }
+  ],
+  "twap_series": [
+    { "timestamp": "2026-04-29T00:00:00.000Z", "twap_value_usd_per_mg": 6.699, "cycle_count": 24 }
+  ]
+}
+```
+
+Notes:
+- Vendors are returned sorted by `vendor_display_name` ascending; the
+  per-vendor `points` array is sorted by `timestamp` ascending.
+- `timestamp` values are zero-padded UTC bucket-start ISO 8601 strings:
+  - `daily` → `YYYY-MM-DDT00:00:00.000Z`
+  - `hourly` → `YYYY-MM-DDTHH:00:00.000Z`
+- `price_usd_per_mg` is a `number` rounded to 4 decimal places (this
+  endpoint averages per bucket, so full Postgres `numeric` precision
+  isn't meaningful — clients wanting the raw per-observation rows
+  should use `/v1/observations/:id`).
+- Peptides currently in the observation phase (no finalized TWAPs in
+  the window) return `200` with `twap_series: []` rather than `404`.
+
+Example:
+
+```bash
+curl -sS "https://api.biohash.network/v1/peptides/BPC157/price-history?days=14&aggregation=daily" \
+  | jq '{ vendors: .vendors | length, twap_points: .twap_series | length, first_vendor: .vendors[0].vendor_code }'
+# → { "vendors": 6, "twap_points": 14, "first_vendor": "GENETIC" }
+
+curl -sS "https://api.biohash.network/v1/peptides/BPC157/price-history?vendor=PUREHEALTH&days=30" \
+  | jq '.vendors[0].points | map({timestamp, price_usd_per_mg, observation_count}) | .[0:3]'
+```
+
 #### `GET /v1/research/:code`
 
 Peptide Research Index detail page. Combines curated scientific

@@ -146,6 +146,26 @@ const { twap, vendors, spread } = await client.peptides.vendorPrices("BPC157");
 //   spread:  { min, max, variance_pct }
 ```
 
+#### `peptides.priceHistory(code, params?)` → `PeptidePriceHistoryResponse`
+Hits `GET /v1/peptides/:code/price-history`. Per-vendor price history (daily or hourly buckets) plus the TWAP series over the same window.
+
+```ts
+const hist = await client.peptides.priceHistory("BPC157", {
+  days: 30,             // 1..90, default 14
+  aggregation: "daily", // "daily" | "hourly"
+  vendor: "PUREHEALTH", // optional, narrows the response to one series
+});
+
+for (const v of hist.vendors) {
+  console.log(v.vendor_code, v.points.length, "buckets");
+}
+for (const t of hist.twap_series) {
+  console.log(t.timestamp, t.twap_value_usd_per_mg, "n=", t.cycle_count);
+}
+```
+
+`points[].price_usd_per_mg` is a `number` (rounded to 4 decimal places — the endpoint averages per bucket). Bucket timestamps are UTC ISO 8601 strings at the start of the day (daily) or hour (hourly). Peptides currently in the observation phase return a 200 with `twap_series: []` rather than a 404.
+
 ### `client.twaps`
 
 #### `twaps.get(twapId)` → `TwapDetail`
