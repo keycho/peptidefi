@@ -171,6 +171,32 @@ export async function pinCycleToIPFS(
     throw new Error('pinCycleToIPFS: global fetch is unavailable. Node >= 18 is required.');
   }
 
+  // Node's `fetch` body coercion to ByteString rejects any code point > 255.
+  // Vendor URLs / display names harvested from real-world sites contain
+  // U+2028 (LINE SEPARATOR), U+2029 (PARAGRAPH SEPARATOR), em-dashes,
+  // accented characters, etc. — any of which crashes the request with:
+  //
+  //   TypeError: Cannot convert argument to a ByteString because the
+  //   character at index N has a value of M which is greater than 255.
+  //
+  // The fix is to escape every non-ASCII code point as a `\uXXXX` JSON
+  // string escape BEFORE sending. The escape form is valid JSON
+  // (RFC 8259 §7) and is 7-bit ASCII, so Node's fetch is happy. Pinata
+  // parses the JSON and recovers the original character, so the pinned
+  // body — and therefore the CID — is byte-identical to what an
+  // unescaped send would have produced. Only the HTTP transport bytes
+  // change.
+  //
+  // We do NOT escape U+0000..U+007F (already ASCII-safe) or surrogate
+  // pairs as separate halves (the regex matches the BMP range; supplementary
+  // characters are still valid because JSON.stringify already serialized
+  // them as surrogate-pair `\uD83x\uDCxx` escapes when they hit our
+  // regex — JSON.stringify defaults are kind to us here).
+  const bodyJson = JSON.stringify(body).replace(
+    /[\u0080-\uFFFF]/g,
+    (c) => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'),
+  );
+
   let resp: Response;
   try {
     resp = await fetchImpl(PINATA_PIN_JSON_URL, {
@@ -179,7 +205,7 @@ export async function pinCycleToIPFS(
         'Content-Type': 'application/json',
         Authorization: `Bearer ${jwt}`,
       },
-      body: JSON.stringify(body),
+      body: bodyJson,
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
