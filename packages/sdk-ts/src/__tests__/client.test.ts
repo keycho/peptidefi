@@ -160,6 +160,58 @@ describe("BioHash — peptides", () => {
     expect(res.vendors[0]!.vendor_name).toBe("Pure Health Peptides");
     expect(res.spread.variance_pct).toBe(202.8);
   });
+
+  it("peptides.priceHistory → GET /v1/peptides/:code/price-history with query params", async () => {
+    const body = {
+      peptide_code: "BPC157",
+      peptide_display_name: "BPC-157",
+      window_start: "2026-04-29T00:00:00.000Z",
+      window_end: "2026-05-13T00:00:00.000Z",
+      aggregation: "daily",
+      vendors: [
+        {
+          vendor_code: "PUREHEALTH",
+          vendor_display_name: "Pure Health Peptides",
+          points: [
+            { timestamp: "2026-04-29T00:00:00.000Z", price_usd_per_mg: 3.633, observation_count: 4 },
+          ],
+        },
+      ],
+      twap_series: [
+        { timestamp: "2026-04-29T00:00:00.000Z", twap_value_usd_per_mg: 6.699, cycle_count: 24 },
+      ],
+    };
+    const { fetch: fetchImpl, calls } = makeFetch(body);
+    const client = new BioHash({ baseUrl: BASE, fetch: fetchImpl });
+    const res = await client.peptides.priceHistory("BPC157", {
+      days: 30,
+      aggregation: "daily",
+      vendor: "PUREHEALTH",
+    });
+    expect(calls[0]).toBe(
+      `${BASE}/v1/peptides/BPC157/price-history?days=30&aggregation=daily&vendor=PUREHEALTH`,
+    );
+    expect(res.aggregation).toBe("daily");
+    expect(res.vendors[0]!.vendor_code).toBe("PUREHEALTH");
+    expect(res.vendors[0]!.points[0]!.observation_count).toBe(4);
+    expect(res.twap_series[0]!.twap_value_usd_per_mg).toBe(6.699);
+  });
+
+  it("peptides.priceHistory → omits the query string when no params are passed", async () => {
+    const body = {
+      peptide_code: "BPC157",
+      peptide_display_name: "BPC-157",
+      window_start: "x",
+      window_end: "y",
+      aggregation: "daily",
+      vendors: [],
+      twap_series: [],
+    };
+    const { fetch: fetchImpl, calls } = makeFetch(body);
+    const client = new BioHash({ baseUrl: BASE, fetch: fetchImpl });
+    await client.peptides.priceHistory("BPC157");
+    expect(calls[0]).toBe(`${BASE}/v1/peptides/BPC157/price-history`);
+  });
 });
 
 describe("BioHash — twaps", () => {

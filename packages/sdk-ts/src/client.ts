@@ -10,7 +10,9 @@ import type {
   ObservationDetailResponse,
   PeptideDetailResponse,
   PeptideListItem,
+  PeptidePriceHistoryResponse,
   PeptidesListEnvelope,
+  PriceHistoryParams,
   TwapDetail,
   VendorLeaderboardEntry,
   VendorPricesResponse,
@@ -75,6 +77,28 @@ class PeptidesAPI {
     return this.http.request<VendorPricesResponse>({
       method: "GET",
       path: `/v1/peptides/${encodeURIComponent(code)}/vendor-prices`,
+      ...(opts?.signal ? { signal: opts.signal } : {}),
+    });
+  }
+
+  /**
+   * GET /v1/peptides/:code/price-history — per-vendor price history
+   * (aggregated daily or hourly) plus the TWAP series over the same
+   * window. Use {@link PriceHistoryParams.days} (1..90) to control
+   * the window length and {@link PriceHistoryParams.aggregation} to
+   * choose between daily and hourly buckets. Optional
+   * {@link PriceHistoryParams.vendor} narrows the response to a single
+   * supplier code.
+   */
+  priceHistory(
+    code: string,
+    params?: PriceHistoryParams,
+    opts?: { signal?: AbortSignal },
+  ): Promise<PeptidePriceHistoryResponse> {
+    return this.http.request<PeptidePriceHistoryResponse>({
+      method: "GET",
+      path: `/v1/peptides/${encodeURIComponent(code)}/price-history`,
+      ...(params ? { query: params as Record<string, unknown> } : {}),
       ...(opts?.signal ? { signal: opts.signal } : {}),
     });
   }

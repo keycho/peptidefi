@@ -15,6 +15,7 @@ import { getCycleHandler, listCyclesHandler } from "./routes/v1/cycles";
 import { getObservationHandler } from "./routes/v1/observations";
 import { getTwapHandler } from "./routes/v1/twaps";
 import { getPeptideVendorPricesHandler } from "./routes/v1/vendor-prices";
+import { getPeptidePriceHistoryHandler } from "./routes/v1/peptide-price-history";
 import { verifyObservationHandler } from "./routes/v1/verify";
 import { getResearchHandler } from "./routes/v1/research";
 import {
@@ -262,6 +263,11 @@ export function buildApp(options: BuildAppOptions = {}): express.Express {
     "/v1/peptides/:code/vendor-prices",
     cacheFor(60),
     asyncRoute(getPeptideVendorPricesHandler),
+  );
+  app.get(
+    "/v1/peptides/:code/price-history",
+    cacheFor(300),
+    asyncRoute(getPeptidePriceHistoryHandler),
   );
   app.get("/v1/cycles", cacheFor(30), asyncRoute(listCyclesHandler));
   app.get("/v1/cycles/:id", cacheFor(3600), asyncRoute(getCycleHandler));

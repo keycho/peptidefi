@@ -1,6 +1,6 @@
 {
   "name": "@biohashnetwork/sdk",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Official TypeScript SDK for the BioHash public REST API — peptide-market oracle + on-chain commit verifier.",
   "license": "MIT",
   "homepage": "https://github.com/keycho/peptidefi/tree/main/packages/sdk-ts",
