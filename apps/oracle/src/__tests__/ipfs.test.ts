@@ -172,6 +172,161 @@ describe('pinCycleToIPFS — happy path', () => {
   });
 });
 
+/*
+ * Regression: in production we hit
+ *   TypeError: Cannot convert argument to a ByteString because the
+ *   character at index N has a value of M which is greater than 255.
+ * whenever a vendor URL or display string contained a non-Latin-1
+ * character — most commonly U+2028 LINE SEPARATOR, U+2029 PARAGRAPH
+ * SEPARATOR, em-dashes, accented characters. Node's `fetch` body
+ * coercion to ByteString rejects any code point > 255. The fix is
+ * to escape every non-ASCII code point as `\uXXXX` before sending.
+ * These tests pin that behaviour so we never regress to a transport
+ * that throws on real-world vendor data.
+ */
+describe('pinCycleToIPFS — non-ASCII body transport (U+2028 regression)', () => {
+  it('escapes U+2028 LINE SEPARATOR in vendor_url so the body is ASCII-safe', async () => {
+    process.env.PINATA_JWT = 'eyJ.test.token';
+    let capturedBody: string | undefined;
+    const fetchMock = vi.fn(async (_url: unknown, init?: RequestInit) => {
+      capturedBody = String(init?.body ?? '');
+      return jsonResponse(200, {
+        IpfsHash: 'bafycid',
+        PinSize: 100,
+        Timestamp: '2026-05-13T18:00:00.000Z',
+      });
+    });
+
+    const manifest: typeof SAMPLE_MANIFEST = {
+      ...SAMPLE_MANIFEST,
+      observations: [
+        {
+          ...SAMPLE_MANIFEST.observations[0]!,
+          // The bug-trigger character — embedded in a vendor URL the
+          // scraper might have pulled from a site whose page header
+          // included a LINE SEPARATOR.
+          vendor_url: 'https://example.com/p\u2028page',
+        },
+      ],
+    };
+
+    await pinCycleToIPFS(manifest, {
+      fetchImpl: fetchMock as unknown as typeof fetch,
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(capturedBody).toBeDefined();
+    // No literal U+2028 byte in the transport body.
+    expect(capturedBody!.includes(' ')).toBe(false);
+    // The escaped form appears instead.
+    expect(capturedBody!.includes('\\u2028')).toBe(true);
+    // Every byte in the body is 7-bit ASCII (charCode <= 127).
+    for (let i = 0; i < capturedBody!.length; i++) {
+      expect(capturedBody!.charCodeAt(i)).toBeLessThanOrEqual(127);
+    }
+    // The body is still valid JSON, and a JSON-aware parser recovers
+    // the original character (which is what Pinata does server-side).
+    const parsed = JSON.parse(capturedBody!) as {
+      pinataContent: { observations: Array<{ vendor_url: string }> };
+    };
+    expect(parsed.pinataContent.observations[0]!.vendor_url).toBe(
+      'https://example.com/p\u2028page',
+    );
+  });
+
+  it('escapes U+2029 PARAGRAPH SEPARATOR (the sibling of U+2028)', async () => {
+    process.env.PINATA_JWT = 'eyJ.test.token';
+    let capturedBody: string | undefined;
+    const fetchMock = vi.fn(async (_url: unknown, init?: RequestInit) => {
+      capturedBody = String(init?.body ?? '');
+      return jsonResponse(200, { IpfsHash: 'bafycid', PinSize: 1 });
+    });
+    const m: typeof SAMPLE_MANIFEST = {
+      ...SAMPLE_MANIFEST,
+      observations: [
+        {
+          ...SAMPLE_MANIFEST.observations[0]!,
+          vendor_url: 'https://example.com/p\u2029x',
+        },
+      ],
+    };
+    await pinCycleToIPFS(m, { fetchImpl: fetchMock as unknown as typeof fetch });
+    expect(capturedBody!.includes(' ')).toBe(false);
+    expect(capturedBody!.includes('\\u2029')).toBe(true);
+  });
+
+  it('escapes accented characters (é, ñ, em-dash) in vendor display strings', async () => {
+    process.env.PINATA_JWT = 'eyJ.test.token';
+    let capturedBody: string | undefined;
+    const fetchMock = vi.fn(async (_url: unknown, init?: RequestInit) => {
+      capturedBody = String(init?.body ?? '');
+      return jsonResponse(200, { IpfsHash: 'bafycid', PinSize: 1 });
+    });
+    const m: typeof SAMPLE_MANIFEST = {
+      ...SAMPLE_MANIFEST,
+      // Stash assorted non-Latin-1 noise on multiple fields to confirm
+      // the escape is comprehensive, not just U+2028-specific.
+      peptide_code: 'BPC157', // keep code ASCII (real codes are)
+      observations: [
+        {
+          ...SAMPLE_MANIFEST.observations[0]!,
+          vendor_code: 'PURE_HEALTH',
+          vendor_url: 'https://ex\u00e1mple.com/pept\u00edde\u2014\u00e9clair',
+        },
+      ],
+    };
+    await pinCycleToIPFS(m, { fetchImpl: fetchMock as unknown as typeof fetch });
+    // Body is pure ASCII.
+    for (let i = 0; i < capturedBody!.length; i++) {
+      expect(capturedBody!.charCodeAt(i)).toBeLessThanOrEqual(127);
+    }
+    const parsed = JSON.parse(capturedBody!) as {
+      pinataContent: { observations: Array<{ vendor_url: string }> };
+    };
+    // Round-trip integrity preserved.
+    expect(parsed.pinataContent.observations[0]!.vendor_url).toBe(
+      'https://ex\u00e1mple.com/pept\u00edde\u2014\u00e9clair',
+    );
+  });
+
+  it('actual Node fetch accepts the escaped body (smoke test against the real coercion)', async () => {
+    process.env.PINATA_JWT = 'eyJ.test.token';
+    // The real bug surfaced because Node's fetch tries to coerce the
+    // string body to a ByteString. We don't need a network — we just
+    // need to confirm a stand-in fetch that performs ByteString
+    // coercion (same algorithm as Node's) doesn't throw on the body
+    // we produce. Easiest way: hand-roll the same coercion check.
+    let capturedBody: string | undefined;
+    const fetchMock = vi.fn(async (_url: unknown, init?: RequestInit) => {
+      capturedBody = String(init?.body ?? '');
+      // Reproduce Node's ByteString check.
+      for (let i = 0; i < capturedBody.length; i++) {
+        const code = capturedBody.charCodeAt(i);
+        if (code > 255) {
+          throw new TypeError(
+            `Cannot convert argument to a ByteString because the character at index ${i} has a value of ${code} which is greater than 255.`,
+          );
+        }
+      }
+      return jsonResponse(200, { IpfsHash: 'bafycid', PinSize: 1 });
+    });
+
+    const m: typeof SAMPLE_MANIFEST = {
+      ...SAMPLE_MANIFEST,
+      observations: [
+        {
+          ...SAMPLE_MANIFEST.observations[0]!,
+          vendor_url: 'https://example.com/\u2028',
+        },
+      ],
+    };
+    // Must NOT throw — exactly the production crash we're fixing.
+    await expect(
+      pinCycleToIPFS(m, { fetchImpl: fetchMock as unknown as typeof fetch }),
+    ).resolves.toMatchObject({ cid: 'bafycid' });
+  });
+});
+
 describe('pinCycleToIPFS — error paths', () => {
   it('throws a config error when PINATA_JWT is unset', async () => {
     await expect(
