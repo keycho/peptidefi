@@ -1,4 +1,4 @@
-import type { SqlClient } from "./client";
+import type { SqlClient } from './client';
 
 /**
  * State-transition writes for twap_commits — the UUID-keyed analog
@@ -163,6 +163,8 @@ export async function findNextSubmittedTwap(sql: SqlClient): Promise<{
   twap_value: string;
   /** "0x" + 64 hex. Same value embedded in the TWAP commit memo + needed by peg-pusher. */
   observation_set_root: string;
+  /** Used by the IPFS manifest builder to join back to peptide_twaps. */
+  computed_at: Date;
 } | null> {
   const rows = await sql<
     {
@@ -173,11 +175,13 @@ export async function findNextSubmittedTwap(sql: SqlClient): Promise<{
       retry_count: number;
       twap_value: string;
       observation_set_root: string;
+      computed_at: Date;
     }[]
   >`
     SELECT id, peptide_code, solana_signature, submitted_at, retry_count,
            twap_value::text AS twap_value,
-           observation_set_root
+           observation_set_root,
+           computed_at
     FROM   public.twap_commits
     WHERE  status = 'submitted'
       AND  solana_signature IS NOT NULL
@@ -185,4 +189,34 @@ export async function findNextSubmittedTwap(sql: SqlClient): Promise<{
     LIMIT 1
   `;
   return rows[0] ?? null;
+}
+
+/**
+ * Persist the IPFS CID of a finalized TWAP commit's pinned manifest.
+ *
+ * No state-machine transition — `ipfs_cid` is an additive audit-trail
+ * column added in migration 0042. Writes are idempotent at the row
+ * level: a successful pin writes once, and the fire-and-forget call
+ * site (twap-poller.ts) never retries against an already-pinned row
+ * because the row only flows through reconcileInFlight on the
+ * submitted → finalized transition. The `id` guard makes a double-write
+ * a no-op rather than a corruption.
+ *
+ * Returns rowCount; callers may assert it's 1 in development.
+ */
+export async function setTwapIpfsCid(
+  sql: SqlClient,
+  args: { id: string; cid: string },
+): Promise<number> {
+  const rows = await sql<{ updated: number }[]>`
+    WITH updated AS (
+      UPDATE public.twap_commits
+      SET    ipfs_cid = ${args.cid}
+      WHERE  id        = ${args.id}
+        AND  ipfs_cid IS NULL
+      RETURNING 1 AS updated
+    )
+    SELECT count(*)::int AS updated FROM updated
+  `;
+  return rows[0]?.updated ?? 0;
 }

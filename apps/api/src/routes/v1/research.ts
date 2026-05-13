@@ -1,12 +1,8 @@
-import type { Request, Response } from "express";
-import { adminClientUntyped } from "../../supabase";
-import {
-  solscanUrl,
-  solanaExplorerUrl,
-  type SolanaCluster,
-} from "../../oracle-config";
-import { clusterQuerySchema } from "../../validators";
-import { sendError } from "../../errors";
+import type { Request, Response } from 'express';
+import { adminClientUntyped } from '../../supabase';
+import { solscanUrl, solanaExplorerUrl, type SolanaCluster } from '../../oracle-config';
+import { clusterQuerySchema } from '../../validators';
+import { sendError } from '../../errors';
 
 /**
  * GET /v1/research/:code — BioHash Peptide Research Index detail page.
@@ -40,14 +36,14 @@ const VENDOR_PRICE_WINDOW_MS = VENDOR_PRICE_WINDOW_HOURS * 60 * 60 * 1000;
 
 function rowCluster(row: { cluster: string | null }): SolanaCluster {
   switch (row.cluster) {
-    case "mainnet-beta":
-    case "devnet":
-    case "testnet":
+    case 'mainnet-beta':
+    case 'devnet':
+    case 'testnet':
       return row.cluster;
-    case "mainnet":
-      return "mainnet-beta";
+    case 'mainnet':
+      return 'mainnet-beta';
     default:
-      return "devnet";
+      return 'devnet';
   }
 }
 
@@ -77,30 +73,19 @@ interface ObservationRow {
   scraper_run_id: number | string;
   price_usd_per_mg: string | number;
   observed_at: string;
-  suppliers:
-    | { display_name: string }
-    | { display_name: string }[]
-    | null;
+  suppliers: { display_name: string } | { display_name: string }[] | null;
 }
 
-export async function getResearchHandler(
-  req: Request,
-  res: Response,
-): Promise<void> {
-  const codeParam = (req.params.code ?? "").trim().toUpperCase();
+export async function getResearchHandler(req: Request, res: Response): Promise<void> {
+  const codeParam = (req.params.code ?? '').trim().toUpperCase();
   if (!CODE_RE.test(codeParam)) {
-    sendError(
-      res,
-      400,
-      "BAD_REQUEST",
-      "code must be 2–16 uppercase alphanumeric characters",
-    );
+    sendError(res, 400, 'BAD_REQUEST', 'code must be 2–16 uppercase alphanumeric characters');
     return;
   }
 
   const parsedCluster = clusterQuerySchema.safeParse(req.query);
   if (!parsedCluster.success) {
-    sendError(res, 400, "BAD_REQUEST", parsedCluster.error.message);
+    sendError(res, 400, 'BAD_REQUEST', parsedCluster.error.message);
     return;
   }
   const { cluster } = parsedCluster.data;
@@ -109,41 +94,36 @@ export async function getResearchHandler(
 
   // 1. Peptide row (404 if missing).
   const { data: peptide, error: pErr } = await supabase
-    .from("peptides")
-    .select("id, code, display_name, full_name, is_active")
-    .eq("code", codeParam)
+    .from('peptides')
+    .select('id, code, display_name, full_name, is_active')
+    .eq('code', codeParam)
     .maybeSingle();
   if (pErr) {
-    sendError(res, 500, "DB_ERROR", `peptide lookup failed: ${pErr.message}`);
+    sendError(res, 500, 'DB_ERROR', `peptide lookup failed: ${pErr.message}`);
     return;
   }
   if (!peptide) {
-    sendError(res, 404, "NOT_FOUND", `peptide not found: ${codeParam}`);
+    sendError(res, 404, 'NOT_FOUND', `peptide not found: ${codeParam}`);
     return;
   }
 
   // 2. Curated research metadata (404 if peptide isn't indexed).
   const { data: metaRow, error: mErr } = await supabase
-    .from("peptide_research_metadata")
+    .from('peptide_research_metadata')
     .select(
-      "peptide_code, overview, mechanism, applications, half_life_estimate, storage, sequence, molecular_weight, aliases, full_name, pubmed_citation_count_estimate, research_disclaimer",
+      'peptide_code, overview, mechanism, applications, half_life_estimate, storage, sequence, molecular_weight, aliases, full_name, pubmed_citation_count_estimate, research_disclaimer',
     )
-    .eq("peptide_code", peptide.code)
+    .eq('peptide_code', peptide.code)
     .maybeSingle();
   if (mErr) {
-    sendError(
-      res,
-      500,
-      "DB_ERROR",
-      `research metadata lookup failed: ${mErr.message}`,
-    );
+    sendError(res, 500, 'DB_ERROR', `research metadata lookup failed: ${mErr.message}`);
     return;
   }
   if (!metaRow) {
     sendError(
       res,
       404,
-      "NOT_FOUND",
+      'NOT_FOUND',
       `peptide ${peptide.code} exists but is not indexed in the research surface`,
     );
     return;
@@ -153,17 +133,17 @@ export async function getResearchHandler(
   // 3a. TWAP history — last 14 days, optional cluster filter.
   const since = new Date(Date.now() - HISTORY_MS).toISOString();
   let historyQuery = supabase
-    .from("twap_commits")
+    .from('twap_commits')
     .select(
-      "id, twap_value, computed_at, window_start, window_end, observation_set_root, status, solana_signature, solana_slot, finalized_at, cluster",
+      'id, twap_value, computed_at, window_start, window_end, observation_set_root, status, solana_signature, solana_slot, finalized_at, cluster, ipfs_cid',
     )
-    .eq("peptide_code", peptide.code)
-    .gte("computed_at", since)
-    .order("computed_at", { ascending: false });
-  if (cluster !== undefined) historyQuery = historyQuery.eq("cluster", cluster);
+    .eq('peptide_code', peptide.code)
+    .gte('computed_at', since)
+    .order('computed_at', { ascending: false });
+  if (cluster !== undefined) historyQuery = historyQuery.eq('cluster', cluster);
   const { data: history, error: hErr } = await historyQuery;
   if (hErr) {
-    sendError(res, 500, "DB_ERROR", `twap history failed: ${hErr.message}`);
+    sendError(res, 500, 'DB_ERROR', `twap history failed: ${hErr.message}`);
     return;
   }
   const historyRows = history ?? [];
@@ -173,24 +153,16 @@ export async function getResearchHandler(
   // commit, which may not be the first row above if the latest
   // commit is still 'submitted').
   let currentTwapQuery = supabase
-    .from("twap_commits")
-    .select(
-      "twap_value, computed_at, solana_signature, solana_slot, cluster",
-    )
-    .eq("peptide_code", peptide.code)
-    .eq("status", "finalized")
-    .order("computed_at", { ascending: false })
+    .from('twap_commits')
+    .select('twap_value, computed_at, solana_signature, solana_slot, cluster, ipfs_cid')
+    .eq('peptide_code', peptide.code)
+    .eq('status', 'finalized')
+    .order('computed_at', { ascending: false })
     .limit(1);
-  if (cluster !== undefined)
-    currentTwapQuery = currentTwapQuery.eq("cluster", cluster);
+  if (cluster !== undefined) currentTwapQuery = currentTwapQuery.eq('cluster', cluster);
   const { data: latestTwapRows, error: ltErr } = await currentTwapQuery;
   if (ltErr) {
-    sendError(
-      res,
-      500,
-      "DB_ERROR",
-      `current twap query failed: ${ltErr.message}`,
-    );
+    sendError(res, 500, 'DB_ERROR', `current twap query failed: ${ltErr.message}`);
     return;
   }
   const latestTwap = latestTwapRows?.[0] ?? null;
@@ -198,22 +170,15 @@ export async function getResearchHandler(
   // 3c. Current per-vendor prices — last 24h, latest per supplier.
   const vendorSince = new Date(Date.now() - VENDOR_PRICE_WINDOW_MS).toISOString();
   const { data: obsRows, error: oErr } = await supabase
-    .from("supplier_observations")
-    .select(
-      "supplier_id, scraper_run_id, price_usd_per_mg, observed_at, suppliers(display_name)",
-    )
-    .eq("peptide_id", peptide.id)
-    .eq("scrape_success", true)
-    .not("price_usd_per_mg", "is", null)
-    .gte("observed_at", vendorSince)
-    .order("observed_at", { ascending: false });
+    .from('supplier_observations')
+    .select('supplier_id, scraper_run_id, price_usd_per_mg, observed_at, suppliers(display_name)')
+    .eq('peptide_id', peptide.id)
+    .eq('scrape_success', true)
+    .not('price_usd_per_mg', 'is', null)
+    .gte('observed_at', vendorSince)
+    .order('observed_at', { ascending: false });
   if (oErr) {
-    sendError(
-      res,
-      500,
-      "DB_ERROR",
-      `supplier_observations query failed: ${oErr.message}`,
-    );
+    sendError(res, 500, 'DB_ERROR', `supplier_observations query failed: ${oErr.message}`);
     return;
   }
   const vendors = reduceVendors((obsRows ?? []) as ObservationRow[]);
@@ -229,7 +194,7 @@ export async function getResearchHandler(
   let verification: {
     latest_cycle_id: number | null;
     latest_solana_signature: string | null;
-    verified_at_commitment: "finalized" | null;
+    verified_at_commitment: 'finalized' | null;
     solscan_url: string | null;
   } = {
     latest_cycle_id: null,
@@ -239,18 +204,15 @@ export async function getResearchHandler(
   };
   const latestObsRunId = obsRows?.[0]?.scraper_run_id ?? null;
   if (latestObsRunId !== null) {
-    const upperBound =
-      typeof latestObsRunId === "string"
-        ? Number(latestObsRunId)
-        : latestObsRunId;
+    const upperBound = typeof latestObsRunId === 'string' ? Number(latestObsRunId) : latestObsRunId;
     let cycleQ = supabase
-      .from("commit_cycles")
-      .select("cycle_id, solana_signature, status, cluster")
-      .eq("status", "finalized")
-      .lte("cycle_id", upperBound)
-      .order("cycle_id", { ascending: false })
+      .from('commit_cycles')
+      .select('cycle_id, solana_signature, status, cluster')
+      .eq('status', 'finalized')
+      .lte('cycle_id', upperBound)
+      .order('cycle_id', { ascending: false })
       .limit(1);
-    if (cluster !== undefined) cycleQ = cycleQ.eq("cluster", cluster);
+    if (cluster !== undefined) cycleQ = cycleQ.eq('cluster', cluster);
     const { data: cycleRows, error: cErr } = await cycleQ;
     if (cErr) {
       // Non-fatal — verification anchor is best-effort metadata.
@@ -264,10 +226,9 @@ export async function getResearchHandler(
       if (c && c.solana_signature) {
         const cc = rowCluster(c);
         verification = {
-          latest_cycle_id:
-            typeof c.cycle_id === "string" ? Number(c.cycle_id) : c.cycle_id,
+          latest_cycle_id: typeof c.cycle_id === 'string' ? Number(c.cycle_id) : c.cycle_id,
           latest_solana_signature: c.solana_signature,
-          verified_at_commitment: "finalized",
+          verified_at_commitment: 'finalized',
           solscan_url: solscanUrl(c.solana_signature, cc),
         };
       }
@@ -275,7 +236,7 @@ export async function getResearchHandler(
   }
 
   // ─── Response ──────────────────────────────────────────────────
-  res.set("Cache-Control", "public, max-age=300");
+  res.set('Cache-Control', 'public, max-age=300');
   res.json({
     peptide: {
       code: peptide.code,
@@ -315,6 +276,7 @@ function shapeCurrentTwap(row: {
   solana_signature: string | null;
   solana_slot: number | string | null;
   cluster: string | null;
+  ipfs_cid?: string | null;
 }): {
   twap_value: string;
   computed_at: string;
@@ -322,6 +284,7 @@ function shapeCurrentTwap(row: {
   solana_slot: number | null;
   cluster: SolanaCluster;
   solscan_url: string | null;
+  ipfs_cid: string | null;
 } {
   const c = rowCluster(row);
   return {
@@ -331,11 +294,16 @@ function shapeCurrentTwap(row: {
     solana_slot:
       row.solana_slot === null || row.solana_slot === undefined
         ? null
-        : typeof row.solana_slot === "string"
+        : typeof row.solana_slot === 'string'
           ? Number(row.solana_slot)
           : row.solana_slot,
     cluster: c,
     solscan_url: row.solana_signature ? solscanUrl(row.solana_signature, c) : null,
+    // `ipfs_cid` is the audit-trail anchor for this TWAP commit's full
+    // observation set. Pinned by the oracle service after Solana
+    // finalization (apps/oracle/src/ipfs/). Null when pinning is
+    // disabled or has not yet succeeded for this row.
+    ipfs_cid: row.ipfs_cid ?? null,
   };
 }
 
@@ -351,6 +319,7 @@ function shapeHistoryItem(row: {
   solana_slot: number | string | null;
   finalized_at: string | null;
   cluster: string | null;
+  ipfs_cid?: string | null;
 }): {
   twap_id: string;
   twap_value: string;
@@ -360,16 +329,15 @@ function shapeHistoryItem(row: {
   observation_set_root: string;
   status: string;
   cluster: SolanaCluster;
-  solana:
-    | {
-        signature: string;
-        slot: number | null;
-        cluster: SolanaCluster;
-        solscan_url: string;
-        explorer_url: string;
-      }
-    | null;
+  solana: {
+    signature: string;
+    slot: number | null;
+    cluster: SolanaCluster;
+    solscan_url: string;
+    explorer_url: string;
+  } | null;
   finalized_at: string | null;
+  ipfs_cid: string | null;
 } {
   const c = rowCluster(row);
   return {
@@ -387,7 +355,7 @@ function shapeHistoryItem(row: {
           slot:
             row.solana_slot === null || row.solana_slot === undefined
               ? null
-              : typeof row.solana_slot === "string"
+              : typeof row.solana_slot === 'string'
                 ? Number(row.solana_slot)
                 : row.solana_slot,
           cluster: c,
@@ -396,6 +364,7 @@ function shapeHistoryItem(row: {
         }
       : null,
     finalized_at: row.finalized_at,
+    ipfs_cid: row.ipfs_cid ?? null,
   };
 }
 
@@ -416,9 +385,7 @@ function reduceVendors(rows: ObservationRow[]): VendorEntry[] {
   );
 }
 
-function extractSupplierName(
-  s: ObservationRow["suppliers"],
-): string | null {
+function extractSupplierName(s: ObservationRow['suppliers']): string | null {
   if (!s) return null;
   if (Array.isArray(s)) return s[0]?.display_name ?? null;
   return s.display_name ?? null;
@@ -426,7 +393,7 @@ function extractSupplierName(
 
 function toStringArray(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
-  return value.filter((v): v is string => typeof v === "string");
+  return value.filter((v): v is string => typeof v === 'string');
 }
 
 /* ─── exports for tests ────────────────────────────────────────── */

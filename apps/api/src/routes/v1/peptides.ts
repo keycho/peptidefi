@@ -1,23 +1,19 @@
-import type { Request, Response } from "express";
-import { adminClientUntyped } from "../../supabase";
-import {
-  solscanUrl,
-  solanaExplorerUrl,
-  type SolanaCluster,
-} from "../../oracle-config";
-import { clusterQuerySchema } from "../../validators";
-import { sendError } from "../../errors";
+import type { Request, Response } from 'express';
+import { adminClientUntyped } from '../../supabase';
+import { solscanUrl, solanaExplorerUrl, type SolanaCluster } from '../../oracle-config';
+import { clusterQuerySchema } from '../../validators';
+import { sendError } from '../../errors';
 
 function rowCluster(row: { cluster: string | null }): SolanaCluster {
   switch (row.cluster) {
-    case "mainnet-beta":
-    case "devnet":
-    case "testnet":
+    case 'mainnet-beta':
+    case 'devnet':
+    case 'testnet':
       return row.cluster;
-    case "mainnet":
-      return "mainnet-beta";
+    case 'mainnet':
+      return 'mainnet-beta';
     default:
-      return "devnet";
+      return 'devnet';
   }
 }
 
@@ -46,6 +42,9 @@ interface CurrentTwap {
   solana_slot: number | null;
   cluster: SolanaCluster | null;
   solscan_url: string | null;
+  /** IPFS CID of the pinned cycle manifest (oracle service, fire-and-forget
+   *  after Solana finalization). Null when pinning is disabled or pending. */
+  ipfs_cid: string | null;
 }
 
 interface PeptideListItem {
@@ -57,13 +56,10 @@ interface PeptideListItem {
   twap_commits_count: number;
 }
 
-export async function listPeptidesHandler(
-  req: Request,
-  res: Response,
-): Promise<void> {
+export async function listPeptidesHandler(req: Request, res: Response): Promise<void> {
   const parsedCluster = clusterQuerySchema.safeParse(req.query);
   if (!parsedCluster.success) {
-    sendError(res, 400, "BAD_REQUEST", parsedCluster.error.message);
+    sendError(res, 400, 'BAD_REQUEST', parsedCluster.error.message);
     return;
   }
   const { cluster } = parsedCluster.data;
@@ -71,12 +67,12 @@ export async function listPeptidesHandler(
 
   // 1. Active peptides (one query).
   const { data: peptides, error: pErr } = await supabase
-    .from("peptides")
-    .select("id, code, display_name, full_name")
-    .eq("is_active", true)
-    .order("id", { ascending: true });
+    .from('peptides')
+    .select('id, code, display_name, full_name')
+    .eq('is_active', true)
+    .order('id', { ascending: true });
   if (pErr) {
-    sendError(res, 500, "DB_ERROR", `peptides query failed: ${pErr.message}`);
+    sendError(res, 500, 'DB_ERROR', `peptides query failed: ${pErr.message}`);
     return;
   }
 
@@ -85,24 +81,21 @@ export async function listPeptidesHandler(
   //    reduce in JS — Supabase's PostgREST has no DISTINCT ON helper
   //    surfaced in the JS client.
   let twapQuery = supabase
-    .from("twap_commits")
+    .from('twap_commits')
     .select(
-      "peptide_code, twap_value, computed_at, solana_signature, solana_slot, cluster",
+      'peptide_code, twap_value, computed_at, solana_signature, solana_slot, cluster, ipfs_cid',
     )
-    .eq("status", "finalized")
-    .order("computed_at", { ascending: false });
+    .eq('status', 'finalized')
+    .order('computed_at', { ascending: false });
   if (cluster !== undefined) {
-    twapQuery = twapQuery.eq("cluster", cluster);
+    twapQuery = twapQuery.eq('cluster', cluster);
   }
   const { data: twaps, error: tErr } = await twapQuery;
   if (tErr) {
-    sendError(res, 500, "DB_ERROR", `twap_commits query failed: ${tErr.message}`);
+    sendError(res, 500, 'DB_ERROR', `twap_commits query failed: ${tErr.message}`);
     return;
   }
-  const latestByCode = new Map<
-    string,
-    NonNullable<typeof twaps>[number]
-  >();
+  const latestByCode = new Map<string, NonNullable<typeof twaps>[number]>();
   for (const t of twaps ?? []) {
     if (!latestByCode.has(t.peptide_code)) latestByCode.set(t.peptide_code, t);
   }
@@ -136,6 +129,7 @@ export async function listPeptidesHandler(
               latest.solana_signature && latestCluster
                 ? solscanUrl(latest.solana_signature, latestCluster)
                 : null,
+            ipfs_cid: (latest as { ipfs_cid?: string | null }).ipfs_cid ?? null,
           }
         : null,
     };
@@ -147,12 +141,12 @@ export async function listPeptidesHandler(
 export async function getPeptideHandler(req: Request, res: Response): Promise<void> {
   const idParam = req.params.id;
   if (!idParam) {
-    sendError(res, 400, "BAD_REQUEST", "missing :id path parameter");
+    sendError(res, 400, 'BAD_REQUEST', 'missing :id path parameter');
     return;
   }
   const parsedCluster = clusterQuerySchema.safeParse(req.query);
   if (!parsedCluster.success) {
-    sendError(res, 400, "BAD_REQUEST", parsedCluster.error.message);
+    sendError(res, 400, 'BAD_REQUEST', parsedCluster.error.message);
     return;
   }
   const { cluster } = parsedCluster.data;
@@ -160,37 +154,35 @@ export async function getPeptideHandler(req: Request, res: Response): Promise<vo
 
   // Resolve :id — accept either numeric id or the code string.
   const numericId = /^\d+$/.test(idParam) ? Number(idParam) : null;
-  const query = supabase
-    .from("peptides")
-    .select("id, code, display_name, full_name, is_active");
+  const query = supabase.from('peptides').select('id, code, display_name, full_name, is_active');
   const { data: peptide, error: pErr } = await (numericId !== null
-    ? query.eq("id", numericId).maybeSingle()
-    : query.eq("code", idParam).maybeSingle());
+    ? query.eq('id', numericId).maybeSingle()
+    : query.eq('code', idParam).maybeSingle());
   if (pErr) {
-    sendError(res, 500, "DB_ERROR", `peptide lookup failed: ${pErr.message}`);
+    sendError(res, 500, 'DB_ERROR', `peptide lookup failed: ${pErr.message}`);
     return;
   }
   if (!peptide) {
-    sendError(res, 404, "NOT_FOUND", `peptide not found: ${idParam}`);
+    sendError(res, 404, 'NOT_FOUND', `peptide not found: ${idParam}`);
     return;
   }
 
   // TWAP history — last 7 days.
   const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
   let historyQuery = supabase
-    .from("twap_commits")
+    .from('twap_commits')
     .select(
-      "id, peptide_code, twap_value, computed_at, window_start, window_end, observation_set_root, status, solana_signature, solana_slot, finalized_at, cluster",
+      'id, peptide_code, twap_value, computed_at, window_start, window_end, observation_set_root, status, solana_signature, solana_slot, finalized_at, cluster, ipfs_cid',
     )
-    .eq("peptide_code", peptide.code)
-    .gte("computed_at", sevenDaysAgo)
-    .order("computed_at", { ascending: false });
+    .eq('peptide_code', peptide.code)
+    .gte('computed_at', sevenDaysAgo)
+    .order('computed_at', { ascending: false });
   if (cluster !== undefined) {
-    historyQuery = historyQuery.eq("cluster", cluster);
+    historyQuery = historyQuery.eq('cluster', cluster);
   }
   const { data: history, error: hErr } = await historyQuery;
   if (hErr) {
-    sendError(res, 500, "DB_ERROR", `twap history failed: ${hErr.message}`);
+    sendError(res, 500, 'DB_ERROR', `twap history failed: ${hErr.message}`);
     return;
   }
 
@@ -223,6 +215,7 @@ export async function getPeptideHandler(req: Request, res: Response): Promise<vo
             }
           : null,
         finalized_at: t.finalized_at,
+        ipfs_cid: (t as { ipfs_cid?: string | null }).ipfs_cid ?? null,
       };
     }),
     history_window: { start: sevenDaysAgo, end: new Date().toISOString() },

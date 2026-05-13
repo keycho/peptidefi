@@ -1,7 +1,7 @@
-import type { Request, Response } from "express";
-import { z } from "zod";
-import { adminClientUntyped } from "../../supabase";
-import { sendError } from "../../errors";
+import type { Request, Response } from 'express';
+import { z } from 'zod';
+import { adminClientUntyped } from '../../supabase';
+import { sendError } from '../../errors';
 
 /**
  * GET /v1/peptides/:code/price-history
@@ -35,13 +35,8 @@ const VENDOR_CODE_RE = /^[A-Z0-9_]{2,32}$/;
 
 const querySchema = z.object({
   days: z.coerce.number().int().min(1).max(90).default(14),
-  aggregation: z.enum(["daily", "hourly"]).default("daily"),
-  vendor: z
-    .string()
-    .trim()
-    .toUpperCase()
-    .regex(VENDOR_CODE_RE)
-    .optional(),
+  aggregation: z.enum(['daily', 'hourly']).default('daily'),
+  vendor: z.string().trim().toUpperCase().regex(VENDOR_CODE_RE).optional(),
 });
 
 interface ObservationRow {
@@ -57,6 +52,7 @@ interface ObservationRow {
 interface TwapRow {
   twap_value: string | number;
   computed_at: string;
+  ipfs_cid?: string | null;
 }
 
 interface VendorPoint {
@@ -75,26 +71,28 @@ interface TwapPoint {
   timestamp: string;
   twap_value_usd_per_mg: number;
   cycle_count: number;
+  /**
+   * IPFS CID for the most recent finalized TWAP commit inside this
+   * aggregation bucket. Null when none of the rows in the bucket
+   * have been pinned (pinning disabled, or pin pending). Each bucket
+   * may collapse multiple TWAP rows; this surfaces one CID per bucket
+   * — the freshest within the bucket window — which is the most
+   * useful audit anchor for that bucket without ballooning the
+   * response shape into a per-row array.
+   */
+  ipfs_cid: string | null;
 }
 
-export async function getPeptidePriceHistoryHandler(
-  req: Request,
-  res: Response,
-): Promise<void> {
-  const codeParam = (req.params.code ?? "").trim().toUpperCase();
+export async function getPeptidePriceHistoryHandler(req: Request, res: Response): Promise<void> {
+  const codeParam = (req.params.code ?? '').trim().toUpperCase();
   if (!CODE_RE.test(codeParam)) {
-    sendError(
-      res,
-      400,
-      "BAD_REQUEST",
-      "code must be 2–16 uppercase alphanumeric characters",
-    );
+    sendError(res, 400, 'BAD_REQUEST', 'code must be 2–16 uppercase alphanumeric characters');
     return;
   }
 
   const parsed = querySchema.safeParse(req.query);
   if (!parsed.success) {
-    sendError(res, 400, "BAD_REQUEST", parsed.error.message);
+    sendError(res, 400, 'BAD_REQUEST', parsed.error.message);
     return;
   }
   const { days, aggregation, vendor } = parsed.data;
@@ -103,16 +101,16 @@ export async function getPeptidePriceHistoryHandler(
 
   // 1. Resolve :code → peptide row (404 if missing).
   const { data: peptide, error: pErr } = await supabase
-    .from("peptides")
-    .select("id, code, display_name")
-    .eq("code", codeParam)
+    .from('peptides')
+    .select('id, code, display_name')
+    .eq('code', codeParam)
     .maybeSingle();
   if (pErr) {
-    sendError(res, 500, "DB_ERROR", `peptide lookup failed: ${pErr.message}`);
+    sendError(res, 500, 'DB_ERROR', `peptide lookup failed: ${pErr.message}`);
     return;
   }
   if (!peptide) {
-    sendError(res, 404, "NOT_FOUND", `peptide not found: ${codeParam}`);
+    sendError(res, 404, 'NOT_FOUND', `peptide not found: ${codeParam}`);
     return;
   }
 
@@ -125,16 +123,16 @@ export async function getPeptidePriceHistoryHandler(
   let vendorSupplierMeta: { code: string; display_name: string } | null = null;
   if (vendor !== undefined) {
     const { data: supplierRow, error: sErr } = await supabase
-      .from("suppliers")
-      .select("id, code, display_name")
-      .eq("code", vendor)
+      .from('suppliers')
+      .select('id, code, display_name')
+      .eq('code', vendor)
       .maybeSingle();
     if (sErr) {
-      sendError(res, 500, "DB_ERROR", `vendor lookup failed: ${sErr.message}`);
+      sendError(res, 500, 'DB_ERROR', `vendor lookup failed: ${sErr.message}`);
       return;
     }
     if (!supplierRow) {
-      sendError(res, 404, "NOT_FOUND", `vendor not found: ${vendor}`);
+      sendError(res, 404, 'NOT_FOUND', `vendor not found: ${vendor}`);
       return;
     }
     vendorSupplierId = supplierRow.id;
@@ -147,58 +145,40 @@ export async function getPeptidePriceHistoryHandler(
   // 3. Observations in window. Vendor join keeps the display name +
   // code lookup in one round-trip.
   let obsQuery = supabase
-    .from("supplier_observations")
-    .select(
-      "supplier_id, price_usd_per_mg, observed_at, suppliers(code, display_name)",
-    )
-    .eq("peptide_id", peptide.id)
-    .eq("scrape_success", true)
-    .not("price_usd_per_mg", "is", null)
-    .gte("observed_at", windowStart.toISOString())
-    .lte("observed_at", windowEnd.toISOString())
-    .order("observed_at", { ascending: true });
+    .from('supplier_observations')
+    .select('supplier_id, price_usd_per_mg, observed_at, suppliers(code, display_name)')
+    .eq('peptide_id', peptide.id)
+    .eq('scrape_success', true)
+    .not('price_usd_per_mg', 'is', null)
+    .gte('observed_at', windowStart.toISOString())
+    .lte('observed_at', windowEnd.toISOString())
+    .order('observed_at', { ascending: true });
   if (vendorSupplierId !== null) {
-    obsQuery = obsQuery.eq("supplier_id", vendorSupplierId);
+    obsQuery = obsQuery.eq('supplier_id', vendorSupplierId);
   }
   const { data: obsRows, error: oErr } = await obsQuery;
   if (oErr) {
-    sendError(
-      res,
-      500,
-      "DB_ERROR",
-      `supplier_observations query failed: ${oErr.message}`,
-    );
+    sendError(res, 500, 'DB_ERROR', `supplier_observations query failed: ${oErr.message}`);
     return;
   }
 
   // 4. TWAP commits in window — used for the twap_series block.
   const { data: twapRows, error: tErr } = await supabase
-    .from("twap_commits")
-    .select("twap_value, computed_at")
-    .eq("peptide_code", peptide.code)
-    .eq("status", "finalized")
-    .gte("computed_at", windowStart.toISOString())
-    .lte("computed_at", windowEnd.toISOString())
-    .order("computed_at", { ascending: true });
+    .from('twap_commits')
+    .select('twap_value, computed_at, ipfs_cid')
+    .eq('peptide_code', peptide.code)
+    .eq('status', 'finalized')
+    .gte('computed_at', windowStart.toISOString())
+    .lte('computed_at', windowEnd.toISOString())
+    .order('computed_at', { ascending: true });
   if (tErr) {
-    sendError(
-      res,
-      500,
-      "DB_ERROR",
-      `twap_commits query failed: ${tErr.message}`,
-    );
+    sendError(res, 500, 'DB_ERROR', `twap_commits query failed: ${tErr.message}`);
     return;
   }
 
   // 5. Aggregate JS-side.
-  const vendorSeriesList = aggregateVendorSeries(
-    (obsRows ?? []) as ObservationRow[],
-    aggregation,
-  );
-  const twapSeriesOut = aggregateTwapSeries(
-    (twapRows ?? []) as TwapRow[],
-    aggregation,
-  );
+  const vendorSeriesList = aggregateVendorSeries((obsRows ?? []) as ObservationRow[], aggregation);
+  const twapSeriesOut = aggregateTwapSeries((twapRows ?? []) as TwapRow[], aggregation);
 
   // If a vendor filter was requested but no observations landed in
   // the window, return an empty series for that vendor rather than
@@ -211,7 +191,7 @@ export async function getPeptidePriceHistoryHandler(
     });
   }
 
-  res.set("Cache-Control", "public, max-age=300, s-maxage=300");
+  res.set('Cache-Control', 'public, max-age=300, s-maxage=300');
   res.json({
     peptide_code: peptide.code,
     peptide_display_name: peptide.display_name,
@@ -233,7 +213,7 @@ export async function getPeptidePriceHistoryHandler(
  */
 function aggregateVendorSeries(
   rows: ObservationRow[],
-  aggregation: "daily" | "hourly",
+  aggregation: 'daily' | 'hourly',
 ): VendorSeries[] {
   type SupplierKey = string | number;
   interface BucketAcc {
@@ -299,22 +279,38 @@ function aggregateVendorSeries(
  * value per bucket. `cycle_count` is the number of finalised commits
  * inside that bucket.
  */
-function aggregateTwapSeries(
-  rows: TwapRow[],
-  aggregation: "daily" | "hourly",
-): TwapPoint[] {
-  const buckets = new Map<string, { sum: number; count: number }>();
+function aggregateTwapSeries(rows: TwapRow[], aggregation: 'daily' | 'hourly'): TwapPoint[] {
+  // Track the freshest computed_at within each bucket so we can pick
+  // the most recent row's ipfs_cid as the bucket's audit anchor.
+  interface BucketAcc {
+    sum: number;
+    count: number;
+    latestMs: number;
+    latestCid: string | null;
+  }
+  const buckets = new Map<string, BucketAcc>();
   for (const row of rows) {
     const bucket = truncateToBucket(row.computed_at, aggregation);
     if (bucket === null) continue;
     const value = Number(row.twap_value);
     if (!Number.isFinite(value) || value <= 0) continue;
+    const ms = Date.parse(row.computed_at);
+    const cid = row.ipfs_cid ?? null;
     const acc = buckets.get(bucket);
     if (acc) {
       acc.sum += value;
       acc.count += 1;
+      if (Number.isFinite(ms) && ms > acc.latestMs) {
+        acc.latestMs = ms;
+        acc.latestCid = cid;
+      }
     } else {
-      buckets.set(bucket, { sum: value, count: 1 });
+      buckets.set(bucket, {
+        sum: value,
+        count: 1,
+        latestMs: Number.isFinite(ms) ? ms : 0,
+        latestCid: cid,
+      });
     }
   }
   return [...buckets.entries()]
@@ -322,6 +318,7 @@ function aggregateTwapSeries(
       timestamp,
       twap_value_usd_per_mg: round4(acc.sum / acc.count),
       cycle_count: acc.count,
+      ipfs_cid: acc.latestCid,
     }))
     .sort((a, b) => a.timestamp.localeCompare(b.timestamp));
 }
@@ -333,30 +330,20 @@ function aggregateTwapSeries(
  *   '2026-05-13T14:37:22Z'  daily  → '2026-05-13T00:00:00.000Z'
  *   '2026-05-13T14:37:22Z'  hourly → '2026-05-13T14:00:00.000Z'
  */
-export function truncateToBucket(
-  ts: string,
-  aggregation: "daily" | "hourly",
-): string | null {
+export function truncateToBucket(ts: string, aggregation: 'daily' | 'hourly'): string | null {
   const ms = Date.parse(ts);
   if (!Number.isFinite(ms)) return null;
   const d = new Date(ms);
-  if (aggregation === "daily") {
-    return new Date(
-      Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()),
-    ).toISOString();
+  if (aggregation === 'daily') {
+    return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate())).toISOString();
   }
   return new Date(
-    Date.UTC(
-      d.getUTCFullYear(),
-      d.getUTCMonth(),
-      d.getUTCDate(),
-      d.getUTCHours(),
-    ),
+    Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), d.getUTCHours()),
   ).toISOString();
 }
 
 function extractSupplier(
-  s: ObservationRow["suppliers"],
+  s: ObservationRow['suppliers'],
 ): { code: string; display_name: string } | null {
   if (!s) return null;
   if (Array.isArray(s)) {
