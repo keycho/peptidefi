@@ -184,12 +184,12 @@ describe('pinCycleToIPFS — happy path', () => {
  * These tests pin that behaviour so we never regress to a transport
  * that throws on real-world vendor data.
  */
-describe('pinCycleToIPFS — non-ASCII body transport (U+2028 regression)', () => {
-  it('escapes U+2028 LINE SEPARATOR in vendor_url so the body is ASCII-safe', async () => {
+describe('pinCycleToIPFS - Buffer body transport (U+2028 regression)', () => {
+  it('passes the body as a Buffer (Uint8Array), NOT a string -- bypasses ByteString coercion', async () => {
     process.env.PINATA_JWT = 'eyJ.test.token';
-    let capturedBody: string | undefined;
+    let capturedBody: unknown;
     const fetchMock = vi.fn(async (_url: unknown, init?: RequestInit) => {
-      capturedBody = String(init?.body ?? '');
+      capturedBody = init?.body;
       return jsonResponse(200, {
         IpfsHash: 'bafycid',
         PinSize: 100,
@@ -197,36 +197,51 @@ describe('pinCycleToIPFS — non-ASCII body transport (U+2028 regression)', () =
       });
     });
 
+    await pinCycleToIPFS(SAMPLE_MANIFEST, {
+      fetchImpl: fetchMock as unknown as typeof fetch,
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    // The body MUST be a typed-array view, not a string. If it ever
+    // regresses to `body: bodyJson`, the production ByteString crash
+    // returns. This is the core invariant of hotfix #2.
+    expect(typeof capturedBody).not.toBe('string');
+    expect(capturedBody).toBeInstanceOf(Uint8Array);
+  });
+
+  it('Buffer body round-trips through utf-8 to the original manifest (U+2028 in vendor_url)', async () => {
+    process.env.PINATA_JWT = 'eyJ.test.token';
+    let capturedBuf: Buffer | undefined;
+    const fetchMock = vi.fn(async (_url: unknown, init?: RequestInit) => {
+      capturedBuf = init?.body as Buffer;
+      return jsonResponse(200, { IpfsHash: 'bafycid', PinSize: 100 });
+    });
+
     const manifest: typeof SAMPLE_MANIFEST = {
       ...SAMPLE_MANIFEST,
       observations: [
         {
           ...SAMPLE_MANIFEST.observations[0]!,
-          // The bug-trigger character — embedded in a vendor URL the
-          // scraper might have pulled from a site whose page header
-          // included a LINE SEPARATOR.
+          // The exact bug-trigger character. Pre-fix, this crashed with
+          // "value of 8232" at the index where it landed in the JSON.
           vendor_url: 'https://example.com/p\u2028page',
         },
       ],
     };
-
     await pinCycleToIPFS(manifest, {
       fetchImpl: fetchMock as unknown as typeof fetch,
     });
 
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(capturedBody).toBeDefined();
-    // No literal U+2028 byte in the transport body.
-    expect(capturedBody!.includes(' ')).toBe(false);
-    // The escaped form appears instead.
-    expect(capturedBody!.includes('\\u2028')).toBe(true);
-    // Every byte in the body is 7-bit ASCII (charCode <= 127).
-    for (let i = 0; i < capturedBody!.length; i++) {
-      expect(capturedBody!.charCodeAt(i)).toBeLessThanOrEqual(127);
-    }
-    // The body is still valid JSON, and a JSON-aware parser recovers
-    // the original character (which is what Pinata does server-side).
-    const parsed = JSON.parse(capturedBody!) as {
+    expect(capturedBuf).toBeDefined();
+    // UTF-8 encoding of U+2028 is the three-byte sequence E2 80 A8.
+    // We expect those bytes to appear verbatim in the body -- i.e. we
+    // did NOT escape, we passed raw UTF-8 bytes.
+    const u2028 = Buffer.from('\u2028', 'utf-8');
+    expect(u2028.equals(Buffer.from([0xe2, 0x80, 0xa8]))).toBe(true);
+    expect(capturedBuf!.includes(u2028)).toBe(true);
+    // Round-trip integrity: decode + parse recovers the original field.
+    const decoded = capturedBuf!.toString('utf-8');
+    const parsed = JSON.parse(decoded) as {
       pinataContent: { observations: Array<{ vendor_url: string }> };
     };
     expect(parsed.pinataContent.observations[0]!.vendor_url).toBe(
@@ -234,11 +249,11 @@ describe('pinCycleToIPFS — non-ASCII body transport (U+2028 regression)', () =
     );
   });
 
-  it('escapes U+2029 PARAGRAPH SEPARATOR (the sibling of U+2028)', async () => {
+  it('U+2029 PARAGRAPH SEPARATOR is transported intact via Buffer', async () => {
     process.env.PINATA_JWT = 'eyJ.test.token';
-    let capturedBody: string | undefined;
+    let capturedBuf: Buffer | undefined;
     const fetchMock = vi.fn(async (_url: unknown, init?: RequestInit) => {
-      capturedBody = String(init?.body ?? '');
+      capturedBuf = init?.body as Buffer;
       return jsonResponse(200, { IpfsHash: 'bafycid', PinSize: 1 });
     });
     const m: typeof SAMPLE_MANIFEST = {
@@ -251,61 +266,55 @@ describe('pinCycleToIPFS — non-ASCII body transport (U+2028 regression)', () =
       ],
     };
     await pinCycleToIPFS(m, { fetchImpl: fetchMock as unknown as typeof fetch });
-    expect(capturedBody!.includes(' ')).toBe(false);
-    expect(capturedBody!.includes('\\u2029')).toBe(true);
+    expect(capturedBuf!.includes(Buffer.from('\u2029', 'utf-8'))).toBe(true);
+    const parsed = JSON.parse(capturedBuf!.toString('utf-8')) as {
+      pinataContent: { observations: Array<{ vendor_url: string }> };
+    };
+    expect(parsed.pinataContent.observations[0]!.vendor_url).toBe('https://example.com/p\u2029x');
   });
 
-  it('escapes accented characters (é, ñ, em-dash) in vendor display strings', async () => {
+  it('mixed non-ASCII (accents + em-dash) round-trips through Buffer transport', async () => {
     process.env.PINATA_JWT = 'eyJ.test.token';
-    let capturedBody: string | undefined;
+    let capturedBuf: Buffer | undefined;
     const fetchMock = vi.fn(async (_url: unknown, init?: RequestInit) => {
-      capturedBody = String(init?.body ?? '');
+      capturedBuf = init?.body as Buffer;
       return jsonResponse(200, { IpfsHash: 'bafycid', PinSize: 1 });
     });
+    const original = 'https://ex\u00e1mple.com/pept\u00edde\u2014\u00e9clair';
     const m: typeof SAMPLE_MANIFEST = {
       ...SAMPLE_MANIFEST,
-      // Stash assorted non-Latin-1 noise on multiple fields to confirm
-      // the escape is comprehensive, not just U+2028-specific.
-      peptide_code: 'BPC157', // keep code ASCII (real codes are)
       observations: [
         {
           ...SAMPLE_MANIFEST.observations[0]!,
           vendor_code: 'PURE_HEALTH',
-          vendor_url: 'https://ex\u00e1mple.com/pept\u00edde\u2014\u00e9clair',
+          vendor_url: original,
         },
       ],
     };
     await pinCycleToIPFS(m, { fetchImpl: fetchMock as unknown as typeof fetch });
-    // Body is pure ASCII.
-    for (let i = 0; i < capturedBody!.length; i++) {
-      expect(capturedBody!.charCodeAt(i)).toBeLessThanOrEqual(127);
-    }
-    const parsed = JSON.parse(capturedBody!) as {
+    const parsed = JSON.parse(capturedBuf!.toString('utf-8')) as {
       pinataContent: { observations: Array<{ vendor_url: string }> };
     };
-    // Round-trip integrity preserved.
-    expect(parsed.pinataContent.observations[0]!.vendor_url).toBe(
-      'https://ex\u00e1mple.com/pept\u00edde\u2014\u00e9clair',
-    );
+    expect(parsed.pinataContent.observations[0]!.vendor_url).toBe(original);
   });
 
-  it('actual Node fetch accepts the escaped body (smoke test against the real coercion)', async () => {
+  it('hand-rolled ByteString fetch mock: pin succeeds because body is not a string', async () => {
     process.env.PINATA_JWT = 'eyJ.test.token';
-    // The real bug surfaced because Node's fetch tries to coerce the
-    // string body to a ByteString. We don't need a network — we just
-    // need to confirm a stand-in fetch that performs ByteString
-    // coercion (same algorithm as Node's) doesn't throw on the body
-    // we produce. Easiest way: hand-roll the same coercion check.
-    let capturedBody: string | undefined;
+    // Stand-in fetch that performs the same ByteString check Node's
+    // real fetch does -- but ONLY when the body is a string. Buffer /
+    // Uint8Array paths skip the check (matches Node's BodyInit
+    // handling). Pre-fix (string body) this would throw the production
+    // TypeError; post-fix (Buffer body) it resolves cleanly.
     const fetchMock = vi.fn(async (_url: unknown, init?: RequestInit) => {
-      capturedBody = String(init?.body ?? '');
-      // Reproduce Node's ByteString check.
-      for (let i = 0; i < capturedBody.length; i++) {
-        const code = capturedBody.charCodeAt(i);
-        if (code > 255) {
-          throw new TypeError(
-            `Cannot convert argument to a ByteString because the character at index ${i} has a value of ${code} which is greater than 255.`,
-          );
+      const body = init?.body;
+      if (typeof body === 'string') {
+        for (let i = 0; i < body.length; i++) {
+          const code = body.charCodeAt(i);
+          if (code > 255) {
+            throw new TypeError(
+              `Cannot convert argument to a ByteString because the character at index ${i} has a value of ${code} which is greater than 255.`,
+            );
+          }
         }
       }
       return jsonResponse(200, { IpfsHash: 'bafycid', PinSize: 1 });
@@ -320,10 +329,21 @@ describe('pinCycleToIPFS — non-ASCII body transport (U+2028 regression)', () =
         },
       ],
     };
-    // Must NOT throw — exactly the production crash we're fixing.
     await expect(
       pinCycleToIPFS(m, { fetchImpl: fetchMock as unknown as typeof fetch }),
     ).resolves.toMatchObject({ cid: 'bafycid' });
+  });
+
+  it('emits diagnostic log lines (length + head + window around index 692)', async () => {
+    process.env.PINATA_JWT = 'eyJ.test.token';
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const fetchMock = vi.fn(async () => jsonResponse(200, { IpfsHash: 'bafycid', PinSize: 1 }));
+    await pinCycleToIPFS(SAMPLE_MANIFEST, {
+      fetchImpl: fetchMock as unknown as typeof fetch,
+    });
+    const joined = log.mock.calls.map((c) => String(c[0])).join('\n');
+    expect(joined).toMatch(/\[ipfs\] body length: \d+ chars \/ \d+ bytes \(utf-8\)/);
+    expect(joined).toMatch(/\[ipfs\] body head\[0\.\.50\]: /);
   });
 });
 

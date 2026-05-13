@@ -171,31 +171,31 @@ export async function pinCycleToIPFS(
     throw new Error('pinCycleToIPFS: global fetch is unavailable. Node >= 18 is required.');
   }
 
-  // Node's `fetch` body coercion to ByteString rejects any code point > 255.
-  // Vendor URLs / display names harvested from real-world sites contain
-  // U+2028 (LINE SEPARATOR), U+2029 (PARAGRAPH SEPARATOR), em-dashes,
-  // accented characters, etc. — any of which crashes the request with:
+  // Hotfix #2 (after #22 / b8f705d): the regex-escape approach in #22
+  // did NOT resolve the production crash. That fix transformed every
+  // non-ASCII code point to a \uXXXX JSON escape, which produces a
+  // pure-ASCII string -- that *should* have satisfied Node's ByteString
+  // coercion. We did not finish proving exactly why the escape did not
+  // take effect under Railway's runtime; rather than chase it, switch
+  // to a transport that bypasses ByteString coercion entirely.
   //
-  //   TypeError: Cannot convert argument to a ByteString because the
-  //   character at index N has a value of M which is greater than 255.
+  // Pass a `Buffer` (a Uint8Array subclass). When `BodyInit` is a
+  // typed-array view, Node's fetch reads the bytes verbatim -- no
+  // string -> ByteString step, no >255 code-point check, no chance of
+  // tripping over U+2028 / U+2029 / accented characters in any field.
   //
-  // The fix is to escape every non-ASCII code point as a `\uXXXX` JSON
-  // string escape BEFORE sending. The escape form is valid JSON
-  // (RFC 8259 §7) and is 7-bit ASCII, so Node's fetch is happy. Pinata
-  // parses the JSON and recovers the original character, so the pinned
-  // body — and therefore the CID — is byte-identical to what an
-  // unescaped send would have produced. Only the HTTP transport bytes
-  // change.
-  //
-  // We do NOT escape U+0000..U+007F (already ASCII-safe) or surrogate
-  // pairs as separate halves (the regex matches the BMP range; supplementary
-  // characters are still valid because JSON.stringify already serialized
-  // them as surrogate-pair `\uD83x\uDCxx` escapes when they hit our
-  // regex — JSON.stringify defaults are kind to us here).
-  const bodyJson = JSON.stringify(body).replace(
-    /[\u0080-\uFFFF]/g,
-    (c) => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'),
-  );
+  // The wire payload is unchanged: Buffer.from(json, 'utf-8') produces
+  // exactly the bytes Pinata's parser sees, the resulting CID is
+  // byte-identical to what an unescaped send would have produced if
+  // ByteString coercion had never been in the way.
+  const bodyJson = JSON.stringify(body);
+  const bodyBytes = Buffer.from(bodyJson, 'utf-8');
+
+  // Diagnostic logging -- runs on every pin so the next production
+  // failure (if any) tells us EXACTLY which field and code point are
+  // involved. Window around position 692 is calibrated to the original
+  // crash index so the log line is directly comparable to the report.
+  logBodyDiagnostic(bodyJson, bodyBytes);
 
   let resp: Response;
   try {
@@ -205,7 +205,10 @@ export async function pinCycleToIPFS(
         'Content-Type': 'application/json',
         Authorization: `Bearer ${jwt}`,
       },
-      body: bodyJson,
+      // CRITICAL: pass the Buffer directly. Calling .toString(),
+      // wrapping in String(...), or using a template literal would
+      // re-introduce the ByteString coercion this fix exists to avoid.
+      body: bodyBytes,
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -258,6 +261,44 @@ export async function pinCycleToIPFS(
     typeof timestamp === 'string' && timestamp.length > 0 ? timestamp : new Date().toISOString();
 
   return { cid, size, pinnedAt };
+}
+
+/**
+ * Pre-fetch diagnostic. Always runs (no env-gate) — these are the
+ * lines the next production failure (if any) will be diagnosed from.
+ * Logs:
+ *
+ *   - JSON string length in CHARS  (what JS sees / what the previous
+ *                                   regex was iterating over)
+ *   - UTF-8 byte length             (what fetch will transport)
+ *   - first 50 chars of the JSON    (sanity that we're sending what
+ *                                   we think we're sending)
+ *   - window around CHAR index 692  (the position from the original
+ *                                   crash report) with char codes so
+ *                                   any non-ASCII is unambiguous
+ *
+ * The 692 probe is informational only — if the crash recurs at a
+ * different index, the failure log will surface the new index and
+ * we can pivot.
+ */
+function logBodyDiagnostic(bodyJson: string, bodyBytes: Buffer): void {
+  const PROBE = 692;
+  const head = bodyJson.slice(0, 50);
+  console.log(`[ipfs] body length: ${bodyJson.length} chars / ${bodyBytes.length} bytes (utf-8)`);
+  console.log(`[ipfs] body head[0..50]: ${JSON.stringify(head)}`);
+
+  if (bodyJson.length > PROBE - 10) {
+    const lo = Math.max(0, PROBE - 10);
+    const hi = Math.min(bodyJson.length, PROBE + 20);
+    const window = bodyJson.slice(lo, hi);
+    const codes: string[] = [];
+    for (let i = lo; i < hi; i++) {
+      const code = bodyJson.charCodeAt(i);
+      codes.push(`${i}:U+${code.toString(16).padStart(4, '0').toUpperCase()}`);
+    }
+    console.log(`[ipfs] body[${lo}..${hi}] snippet: ${JSON.stringify(window)}`);
+    console.log(`[ipfs] body[${lo}..${hi}] codes: ${codes.join(' ')}`);
+  }
 }
 
 /** Test hook to reset the one-time warning latch between tests. */
