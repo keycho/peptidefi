@@ -472,15 +472,6 @@ top-of-hour boundary. Use it as an opaque identifier for "the index
 level for this hourly window"; do not assume any minute-level
 truncation.
 
-**BioHash Peptide Index hours**: the index is contractually hourly
-cadence on the canonical close-of-hour timestamps (`HH:59:00` UTC)
-from `twap_commits.computed_at`. Off-pattern timestamps produced by
-manual events or backfills (rapid DISPATCH, ad-hoc operator pushes)
-do not contribute `index_history` rows even when they happen to
-cluster a full cohort. The oracle's cohort-completion runner filters
-both the in-process trigger and the startup-recovery scan to
-`extract(minute from computed_at) = 59`.
-
 `components_hash` is reproducible byte-for-byte in any language:
 
 1. Load the cohort's per-peptide TWAPs for the hour. The cohort is the
