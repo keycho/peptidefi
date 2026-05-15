@@ -77,6 +77,35 @@ interface RepinRow {
 }
 
 /**
+ * BioHash Peptide Index canonical-cadence guard.
+ *
+ * The index is contractually hourly cadence on the close-of-hour
+ * timestamp from twap_commits.computed_at, which the worker writes
+ * at HH:59:00 UTC (one minute before the hour boundary). Off-pattern
+ * timestamps (manual backfills, rapid DISPATCH events) can produce
+ * full-cohort rows at arbitrary minute offsets; those are artifacts
+ * of one-off operator actions and must not contribute index_history
+ * rows.
+ *
+ * Two enforcement points:
+ *   - SQL filters on both scan sites (the in-process count check and
+ *     the startup-recovery enumeration) include
+ *     `extract(minute from tc.computed_at) = 59`.
+ *   - This JS guard rejects any in-process trigger whose hourStart
+ *     is off-pattern. Defensive: the trigger gets its hourStart from
+ *     twap_commits.computed_at directly, so the SQL filter already
+ *     covers the normal path; this catches a hypothetical future
+ *     caller that passes a non-canonical hourStart explicitly.
+ *
+ * See docs/PUBLIC_API.md "BioHash Peptide Index hours" subsection.
+ */
+const CANONICAL_CLOSE_OF_HOUR_MINUTE = 59;
+
+function isCanonicalIndexHour(hourStart: Date): boolean {
+  return hourStart.getUTCMinutes() === CANONICAL_CLOSE_OF_HOUR_MINUTE;
+}
+
+/**
  * Idempotent cohort-completion handler for one UTC hour.
  *
  * Safe to call when the cohort is incomplete (returns early), safe to
@@ -110,6 +139,15 @@ async function runCohortCompletionForHourInner(
   hourStart: Date,
   healthSink: IndexHealthSink | null,
 ): Promise<void> {
+  // Canonical-cadence guard. Off-pattern timestamps (manual backfills,
+  // rapid DISPATCH events) must not produce index_history rows. See
+  // the comment on isCanonicalIndexHour above and the matching SQL
+  // filter `extract(minute from tc.computed_at) = 59` on both scan
+  // sites in this file.
+  if (!isCanonicalIndexHour(hourStart)) {
+    return;
+  }
+
   // Cohort completion check. Compares the count of finalized cohort
   // rows for the hour against the cohort size. Source of truth for
   // both numbers is the DB so a transient mismatch with the cached
@@ -128,6 +166,7 @@ async function runCohortCompletionForHourInner(
       JOIN   cohort c ON c.peptide_code = tc.peptide_code
       WHERE  tc.computed_at = ${hourStart}
         AND  tc.status      = 'finalized'
+        AND  extract(minute from tc.computed_at) = ${CANONICAL_CLOSE_OF_HOUR_MINUTE}
     )
     SELECT (SELECT count(*)::int FROM cohort)    AS cohort_n,
            (SELECT count(*)::int FROM finalized) AS finalized_n
@@ -348,6 +387,14 @@ export async function runStartupRecovery(
   console.log('[startup-recovery] scanning for incomplete index hours');
 
   // Case D: complete-cohort hours missing an index_history row.
+  //
+  // The `extract(minute ...) = 59` filter restricts the enumeration
+  // to the canonical close-of-hour cadence (HH:59:00 UTC). Off-pattern
+  // timestamps from manual backfills or rapid DISPATCH events can
+  // produce full-cohort clusters at arbitrary minute offsets; those
+  // are operator artifacts, not real index hours, and must not
+  // generate index_history rows. See the isCanonicalIndexHour comment
+  // and docs/PUBLIC_API.md "BioHash Peptide Index hours".
   const missingIndexRows = await sql<{ hour_start: Date }[]>`
     WITH cohort AS (
       SELECT peptide_code FROM public.index_baselines
@@ -357,6 +404,7 @@ export async function runStartupRecovery(
       FROM   public.twap_commits tc
       JOIN   cohort c ON c.peptide_code = tc.peptide_code
       WHERE  tc.status = 'finalized'
+        AND  extract(minute from tc.computed_at) = ${CANONICAL_CLOSE_OF_HOUR_MINUTE}
       GROUP BY tc.computed_at
       HAVING count(*) = (SELECT count(*) FROM cohort)
     )
