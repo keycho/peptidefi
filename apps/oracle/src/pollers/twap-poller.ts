@@ -676,6 +676,12 @@ function pinToIpfsBestEffort(opts: TwapPollerOptions, args: PinIpfsArgs): void {
   // reach the poller's tick handler.
   void (async () => {
     try {
+      // index_snapshot stays null on this call path; the schema 1.1
+      // field is always emitted but populated only by the cycle-poller
+      // integration in step 5 (trigger pinning after the full cohort
+      // hour completes). Until that lands, manifests pinned by this
+      // path carry index_snapshot: null, which schema 1.1 explicitly
+      // permits for hours where the index was not computed.
       const manifest = await buildCycleManifest(opts.sql, {
         peptide_code: args.peptide_code,
         computed_at: args.computed_at,
@@ -683,6 +689,7 @@ function pinToIpfsBestEffort(opts: TwapPollerOptions, args: PinIpfsArgs): void {
         observation_set_root: args.observation_set_root,
         solana_signature: args.solana_signature,
         solana_slot: args.solana_slot,
+        index_snapshot: null,
       });
       const { cid, size } = await pinCycleToIPFS(manifest);
       const updated = await setTwapIpfsCid(opts.sql, { id: args.id, cid });
