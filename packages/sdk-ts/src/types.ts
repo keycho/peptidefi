@@ -25,6 +25,20 @@ export interface SolanaRef {
 
 /* ─── /v1/peptides ────────────────────────────────────────────────── */
 
+/**
+ * Pin-state discriminator (SDK v0.2.1+, BioHash Peptide Index schema 1.1).
+ *
+ * 'pre_cohort' = the surfaced `ipfs_cid` points to a schema 1.1
+ *   manifest whose `index_snapshot` is null (first pin, fired
+ *   immediately after Solana finalization for the per-peptide SLA).
+ * 'final' = the surfaced `ipfs_cid` points to a schema 1.1 manifest
+ *   whose `index_snapshot` is populated (final pin, fired once the
+ *   cohort completes for the hour).
+ *
+ * Null only when no pin has succeeded yet for the row.
+ */
+export type PinState = "pre_cohort" | "final";
+
 export interface PeptideCurrentTwap {
   twap_value: string;
   computed_at: string;
@@ -32,6 +46,14 @@ export interface PeptideCurrentTwap {
   solana_slot: number | null;
   cluster: SolanaCluster;
   solscan_url: string | null;
+  /**
+   * IPFS CID of the pinned cycle manifest, COALESCE(final_ipfs_cid,
+   * ipfs_cid) on the server. Null when no pin has succeeded yet.
+   * Added in SDK v0.2.1 alongside `pin_state`.
+   */
+  ipfs_cid?: string | null;
+  /** See {@link PinState}. Added in SDK v0.2.1. */
+  pin_state?: PinState | null;
 }
 
 export interface PeptideListItem {
@@ -70,6 +92,17 @@ export interface PeptideTwapHistoryItem {
   cluster: SolanaCluster;
   solana: SolanaRef | null;
   finalized_at: string | null;
+  /** See {@link PeptideCurrentTwap.ipfs_cid}. Added in SDK v0.2.1. */
+  ipfs_cid?: string | null;
+  /** See {@link PinState}. Added in SDK v0.2.1. */
+  pin_state?: PinState | null;
+  /**
+   * BioHash Peptide Index level for the hour this commit belongs to,
+   * or null if the cohort was incomplete for the hour. Returned as a
+   * decimal string when the server preserves precision and as a number
+   * otherwise. Added in SDK v0.2.1.
+   */
+  index_level?: number | string | null;
 }
 
 export interface PeptideDetailResponse {
@@ -137,6 +170,10 @@ export interface TwapHistoryPoint {
   timestamp: string;
   twap_value_usd_per_mg: number;
   cycle_count: number;
+  /** See {@link PeptideCurrentTwap.ipfs_cid}. Added in SDK v0.2.1. */
+  ipfs_cid?: string | null;
+  /** See {@link PinState}. Added in SDK v0.2.1. */
+  pin_state?: PinState | null;
 }
 
 export interface PeptidePriceHistoryResponse {
@@ -381,4 +418,87 @@ export interface ListAnomaliesParams {
   peptide_id?: string;
   since?: string;
   until?: string;
+}
+
+/* ─── /v1/index/* (SDK v0.2.1, BioHash Peptide Index) ─────────────── */
+
+/**
+ * One row from the BioHash Peptide Index hourly history. Same shape
+ * returned by /v1/index/current (`index` field), /v1/index/history
+ * (each element of the `history` array), and /v1/index/components
+ * (the `index` field, which mirrors `current` for the same hour).
+ */
+export interface IndexHistoryRow {
+  /** Top-of-hour UTC timestamp (ISO 8601). Primary key in index_history. */
+  hour_start: string;
+  /** Equal-weight index level. Sum of per-peptide contributions. */
+  level: number;
+  /**
+   * sha256 (lowercase hex) of the canonical components vector. See
+   * docs/PUBLIC_API.md "Manifest schema (version 1.1)" for the
+   * byte-for-byte reproducibility recipe.
+   */
+  components_hash: string;
+  /** When the index was computed (wall clock, not the hour itself). */
+  computed_at: string;
+  /** Configured baseline date (ISO date), shared across the cohort. */
+  baseline_date: string;
+  /** Configured baseline level (currently 1000.00). */
+  baseline_level: number;
+  /**
+   * Best-available IPFS CIDs for the 29 cohort manifests pinned for
+   * this hour, in peptide_code-sorted order. `null` when no CIDs are
+   * recorded yet (pre-launch or pinning disabled). May contain fewer
+   * than N entries if some peptides' pins failed in both passes.
+   */
+  ipfs_cids: string[] | null;
+}
+
+export interface IndexCurrentResponse {
+  /** Null when index_history is empty (pre-launch). */
+  index: IndexHistoryRow | null;
+}
+
+export interface IndexHistoryResponse {
+  history: IndexHistoryRow[];
+  window: {
+    from: string;
+    to: string;
+    /** Cap the server enforces on the requested window length. */
+    max_days: number;
+  };
+}
+
+export interface IndexHistoryParams {
+  /** ISO 8601 UTC start of the requested window, inclusive. */
+  from?: string;
+  /** ISO 8601 UTC end of the requested window, inclusive. */
+  to?: string;
+}
+
+/** Per-peptide breakdown of the most recent index level. */
+export interface IndexComponentEntry {
+  peptide_code: string;
+  /** Decimal string (from PG numeric). */
+  baseline_twap: string;
+  /** Configured baseline date (ISO date). */
+  baseline_date: string;
+  /**
+   * Date of the finalized TWAP whose value is recorded in
+   * baseline_twap. Differs from baseline_date when the peptide
+   * started observation after the configured baseline.
+   */
+  actual_baseline_date: string;
+  /** Current TWAP for the hour matching index_history's latest row. */
+  current_twap: number | null;
+  /** 1/N. Same float across every cohort entry for the same hour. */
+  weight: number;
+  /** (current_twap / baseline_twap) * (baseline_level / N). */
+  contribution: number | null;
+}
+
+export interface IndexComponentsResponse {
+  /** The hour these components belong to. Null when no index exists yet. */
+  index: IndexHistoryRow | null;
+  components: IndexComponentEntry[];
 }

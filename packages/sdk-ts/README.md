@@ -277,6 +277,58 @@ do {
 
 Params: `{ limit?; cursor?: string; severity?; event_type?; vendor_id?; peptide_id?; since?; until? }`.
 
+### `client.index` (v0.2.1+)
+
+BioHash Peptide Index, hourly equal-weight level over the v1 29-peptide cohort. Baseline date 2026-05-03, baseline level 1000. See `docs/PUBLIC_API.md` in the repo for the components-hash reproducibility recipe.
+
+#### `index.getIndex()` → `IndexCurrentResponse`
+Hits `GET /v1/index/current`. Returns the latest hour. `index` is null until the first cohort hour completes.
+
+```ts
+const { index } = await client.index.getIndex();
+if (index) {
+  console.log(`level=${index.level} at ${index.hour_start}`);
+  console.log(`components_hash=${index.components_hash}`);
+}
+```
+
+`client.getIndex()` is a convenience alias for the same call.
+
+#### `index.getIndexHistory({ from?, to? })` → `IndexHistoryResponse`
+Hits `GET /v1/index/history`. Time series, ascending. Default window is the last 30 days; the server caps requested ranges at 365 days. Accepts `Date | string` for both bounds.
+
+```ts
+const lastWeek = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+const { history, window } = await client.index.getIndexHistory({ from: lastWeek });
+console.log(`${history.length} hourly points between ${window.from} and ${window.to}`);
+```
+
+#### `index.getIndexComponents()` → `IndexComponentsResponse`
+Hits `GET /v1/index/components`. Per-peptide breakdown of the most recent index level, including each peptide's contribution and weight.
+
+```ts
+const { index, components } = await client.index.getIndexComponents();
+const sorted = [...components].sort((a, b) => (b.contribution ?? 0) - (a.contribution ?? 0));
+for (const c of sorted.slice(0, 5)) {
+  console.log(`${c.peptide_code}: contribution=${c.contribution?.toFixed(2)} weight=${c.weight.toFixed(6)}`);
+}
+```
+
+### Pin state on existing endpoints (v0.2.1+)
+
+Schema 1.1 introduces a pin-twice flow: each TWAP commit may have a "pre-cohort" pin (manifest with `index_snapshot: null`) followed by a "final" pin (manifest with `index_snapshot` populated) once the cohort completes for the hour. The SDK surfaces the best available CID and a `pin_state` discriminator on every existing endpoint that exposes `ipfs_cid`:
+
+```ts
+const peptides = await client.peptides.list();
+for (const p of peptides) {
+  if (p.current_twap?.ipfs_cid) {
+    console.log(`${p.code}: ${p.current_twap.ipfs_cid} (${p.current_twap.pin_state})`);
+  }
+}
+```
+
+`pin_state` is `'final'` when the manifest at that CID carries the populated `index_snapshot`, `'pre_cohort'` when it carries `null`. Verifiers should branch on this if they need to recompute the index from the manifest contents.
+
 ## Error handling
 
 Every non-recoverable failure throws a `BioHashApiError`. Inspect `code`, `status`, and (where present) `retryAfterSeconds`/`details`:
