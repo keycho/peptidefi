@@ -6,9 +6,9 @@
   "main": "types.ts",
   "types": "types.ts",
   "scripts": {
-    "link": "supabase link --project-ref pjsjaspntdjecfitogtc",
+    "link": "supabase link --project-ref mnquozxfniasbpaavcos",
     "push": "supabase db push",
     "diff": "supabase db diff",
-    "gen-types": "supabase gen types typescript --project-id pjsjaspntdjecfitogtc --schema public > types.ts"
+    "gen-types": "supabase gen types typescript --project-id mnquozxfniasbpaavcos --schema public > types.ts"
   }
 }

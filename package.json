@@ -9,10 +9,10 @@
   },
   "packageManager": "pnpm@10.33.0",
   "scripts": {
-    "db:link": "supabase link --project-ref pjsjaspntdjecfitogtc --workdir packages/db",
+    "db:link": "supabase link --project-ref mnquozxfniasbpaavcos --workdir packages/db",
     "db:push": "supabase db push --workdir packages/db",
     "db:diff": "supabase db diff --workdir packages/db",
-    "db:gen-types": "supabase gen types typescript --project-id pjsjaspntdjecfitogtc --schema public > packages/db/types.ts",
+    "db:gen-types": "supabase gen types typescript --project-id mnquozxfniasbpaavcos --schema public > packages/db/types.ts",
     "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md,yml,yaml}\"",
     "format:check": "prettier --check \"**/*.{ts,tsx,js,jsx,json,md,yml,yaml}\"",
     "init-peg-mainnet": "tsx scripts/initialize-peg-mainnet.ts"
