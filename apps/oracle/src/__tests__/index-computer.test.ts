@@ -227,4 +227,44 @@ describe('createIndexComputer', () => {
     expect(result).not.toBeNull();
     expect(Math.abs(result!.level - 1000)).toBeLessThan(1e-9);
   });
+
+  /**
+   * Mixed-drift test against the v1 N=29 cohort. 14 peptides moved
+   * +5% from baseline, 15 are unchanged. The expected level is the
+   * weighted average:
+   *
+   *   level = sum_i (twap_i / baseline_i) * (1000 / 29)
+   *         = (14 * 1.05 + 15 * 1.00) * (1000 / 29)
+   *         = 29.7 * (1000 / 29)
+   *         = 29700 / 29
+   *         = 1024.137931034482...
+   *
+   * Tolerance is 1e-9 to absorb the (1000/29) imprecision; the
+   * algebra above is exact, the float arithmetic is not.
+   */
+  it('produces the expected weighted average for a 14/15 split mixed-drift cohort at N=29', () => {
+    const baselines: IndexBaseline[] = [];
+    const twaps = new Map<string, number>();
+    for (let i = 0; i < 29; i++) {
+      const code = `P${String(i).padStart(2, '0')}`;
+      const baselineTwap = 1 + i * 0.5;
+      baselines.push({
+        peptide_code: code,
+        baseline_twap: baselineTwap,
+        baseline_date: BASELINE_DATE,
+      });
+      // First 14 drifted +5%, remaining 15 unchanged.
+      const driftMultiplier = i < 14 ? 1.05 : 1.0;
+      twaps.set(code, baselineTwap * driftMultiplier);
+    }
+    const computer = createIndexComputer(baselines);
+    const result = computer.computeIndex(HOUR, twaps);
+    expect(result).not.toBeNull();
+    const expectedLevel = (29700 / 29);
+    expect(Math.abs(result!.level - expectedLevel)).toBeLessThan(1e-9);
+    // Sanity: level must sit between the two anchors (1000 if no drift,
+    // 1050 if every peptide moved +5%).
+    expect(result!.level).toBeGreaterThan(1000);
+    expect(result!.level).toBeLessThan(1050);
+  });
 });

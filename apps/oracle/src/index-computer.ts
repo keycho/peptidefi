@@ -79,8 +79,17 @@ interface CanonicalComponent {
 }
 
 /**
- * Load the v1 cohort from index_baselines. Called once at oracle
- * startup; the resulting array is passed to createIndexComputer.
+ * Load the v1 cohort from index_baselines.
+ *
+ * LIFECYCLE: called ONCE at oracle startup. The returned array is
+ * passed to createIndexComputer, which captures it in a closure and
+ * holds it for the lifetime of the process. There is no in-process
+ * refresh path. If an operator manually mutates public.index_baselines
+ * (re-baselines a peptide, adds a row, deletes a row), THE ORACLE
+ * MUST BE RESTARTED before the change takes effect. This is by design:
+ * the cohort is a stable identity of the index series, not a runtime
+ * knob, and reloading it mid-process would risk emitting two manifests
+ * in the same hour with different components_hash values.
  *
  * Ordered by peptide_code ASC for stable consumer iteration. The
  * ::text cast on baseline_twap forces postgres.js to return a string
