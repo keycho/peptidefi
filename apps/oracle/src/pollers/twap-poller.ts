@@ -26,6 +26,8 @@ import type { PegPusher } from '../peg/peg-pusher';
 import { logAnomaly } from '@peptide-oracle/shared';
 import { isPinataConfigured, pinCycleToIPFS } from '../ipfs/pinata';
 import { buildCycleManifest } from '../ipfs/manifest-builder';
+import type { IndexComputer } from '../index-computer';
+import { runCohortCompletionForHour } from '../index-history-runner';
 
 /**
  * TWAP commit poller — Phase D scope (§3.3).
@@ -80,6 +82,17 @@ export interface TwapPollerOptions {
    * TWAP commit pipeline.
    */
   pegPusher?: PegPusher | null;
+  /**
+   * Optional BioHash Peptide Index computer (schema 1.1). When
+   * provided, every TWAP that reaches 'finalized' triggers a
+   * detached cohort-completion check; if the check finds all cohort
+   * peptides finalized for the same UTC hour, the runner writes
+   * index_history, populates per-row index columns, and pins the 29
+   * schema 1.1 manifests with the populated index_snapshot.
+   * Null when public.index_baselines is empty (pre-launch) -- the
+   * existing first-pin path still runs unchanged.
+   */
+  indexComputer?: IndexComputer | null;
 }
 
 export async function runTwapPoller(opts: TwapPollerOptions): Promise<void> {
@@ -212,6 +225,15 @@ async function reconcileInFlight(opts: TwapPollerOptions): Promise<void> {
         `confirmed_slot=${attestation.confirmed_slot ?? 'null'} ` +
         `sig=${solana_signature}`,
     );
+    // Schema 1.1 pin-twice flow:
+    //   Step 1, here: fire-and-forget first pin with index_snapshot=null.
+    //     Preserves the per-peptide pin SLA (~seconds after finalize)
+    //     regardless of whether the cohort has completed yet.
+    //   Step 2, below: fire-and-forget cohort-completion trigger.
+    //     If this finalize completed the 29-of-29 cohort for the hour,
+    //     the runner writes index_history, populates per-row columns,
+    //     and pins the 29 schema 1.1 manifests with the populated
+    //     index_snapshot into final_ipfs_cid. Otherwise no-ops cheaply.
     pinToIpfsBestEffort(opts, {
       id,
       peptide_code,
@@ -221,6 +243,7 @@ async function reconcileInFlight(opts: TwapPollerOptions): Promise<void> {
       solana_signature,
       solana_slot: slot,
     });
+    triggerCohortCompletionBestEffort(opts, computed_at);
     await invokePegPusherBestEffort(opts, {
       peptide_code,
       twap_value,
@@ -270,6 +293,11 @@ async function reconcileInFlight(opts: TwapPollerOptions): Promise<void> {
       `[twap-poller] peptide=${peptide_code} FINALIZED (late) slot=${slot} ` +
         `confirmed_slot=${attestation.confirmed_slot ?? 'null'}`,
     );
+    // Schema 1.1 pin-twice flow, late-finalization path. Same shape
+    // as the happy-path branch above (see the comment there). The
+    // cohort-completion trigger covers the case where this row was
+    // the 29th to finalize but only made it past the confirmation
+    // timeout on the recheck.
     pinToIpfsBestEffort(opts, {
       id,
       peptide_code,
@@ -279,6 +307,7 @@ async function reconcileInFlight(opts: TwapPollerOptions): Promise<void> {
       solana_signature,
       solana_slot: slot,
     });
+    triggerCohortCompletionBestEffort(opts, computed_at);
     await invokePegPusherBestEffort(opts, {
       peptide_code,
       twap_value,
@@ -668,6 +697,47 @@ interface PinIpfsArgs {
   observation_set_root: string;
   solana_signature: string;
   solana_slot: number;
+}
+
+/**
+ * Fire-and-forget cohort-completion check (schema 1.1).
+ *
+ * Called after every markFinalizedTwap. If the just-finalized peptide
+ * completes the 29-of-29 cohort for its hour, the detached runner
+ * computes the index, writes the index_history row under the
+ * hour_start PK mutex, populates per-row index_level / components_hash
+ * columns, and pins the 29 schema 1.1 manifests with the populated
+ * index_snapshot into twap_commits.final_ipfs_cid.
+ *
+ * NEVER awaits, NEVER throws back to the poller. A Pinata outage,
+ * an index-computer bug, or a transient DB error during the runner
+ * cannot block the next TWAP finalize, the next reconcile tick, or
+ * shutdown. The first pin already happened (see pinToIpfsBestEffort
+ * above); the response surface uses COALESCE(final_ipfs_cid, ipfs_cid)
+ * so the consumer-facing CID is always at least the first-pin CID.
+ */
+function triggerCohortCompletionBestEffort(
+  opts: TwapPollerOptions,
+  hourStart: Date,
+): void {
+  const computer = opts.indexComputer;
+  if (!computer) return;
+  void (async () => {
+    try {
+      await runCohortCompletionForHour(
+        opts.sql,
+        computer,
+        hourStart,
+        opts.health.index,
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(
+        `[twap-poller] cohort-completion trigger hour=${hourStart.toISOString()} ` +
+          `failed: ${msg}`,
+      );
+    }
+  })();
 }
 
 function pinToIpfsBestEffort(opts: TwapPollerOptions, args: PinIpfsArgs): void {
