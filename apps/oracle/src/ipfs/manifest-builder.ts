@@ -27,7 +27,11 @@
  */
 
 import type { SqlClient } from '../db/client';
-import type { CycleManifest, ManifestObservation } from './pinata';
+import type {
+  CycleManifest,
+  IndexSnapshot,
+  ManifestObservation,
+} from './pinata';
 import { TWAP_ALGO_V1 } from './pinata';
 
 const EXCLUSION_REASON_FOR_DROPPED = `excluded_by_${TWAP_ALGO_V1}`;
@@ -41,6 +45,13 @@ export interface BuildManifestArgs {
   observation_set_root: string;
   solana_signature: string;
   solana_slot: number;
+  /**
+   * Index snapshot for the UTC hour this commit belongs to, or null
+   * if the index was not computed for the hour (fewer than cohort-size
+   * peptides finalized). Always emitted as a top-level field on the
+   * manifest -- never omitted -- per schema 1.1.
+   */
+  index_snapshot: IndexSnapshot | null;
 }
 
 /**
@@ -152,7 +163,7 @@ export async function buildCycleManifest(
   }
 
   return {
-    version: '1.0',
+    version: '1.1',
     peptide_code: args.peptide_code,
     cycle_id: idToNumber(shell.twap_id),
     computed_at: args.computed_at.toISOString(),
@@ -163,6 +174,7 @@ export async function buildCycleManifest(
     solana_signature: args.solana_signature,
     solana_slot: args.solana_slot,
     observations,
+    index_snapshot: args.index_snapshot,
   };
 }
 

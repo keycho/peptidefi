@@ -2,6 +2,7 @@ import type { Request, Response } from 'express';
 import { z } from 'zod';
 import { adminClientUntyped } from '../../supabase';
 import { sendError } from '../../errors';
+import { resolvePinFields, type PinState } from '../../lib/pin-state';
 
 /**
  * GET /v1/peptides/:code/price-history
@@ -53,6 +54,7 @@ interface TwapRow {
   twap_value: string | number;
   computed_at: string;
   ipfs_cid?: string | null;
+  final_ipfs_cid?: string | null;
 }
 
 interface VendorPoint {
@@ -73,14 +75,20 @@ interface TwapPoint {
   cycle_count: number;
   /**
    * IPFS CID for the most recent finalized TWAP commit inside this
-   * aggregation bucket. Null when none of the rows in the bucket
-   * have been pinned (pinning disabled, or pin pending). Each bucket
-   * may collapse multiple TWAP rows; this surfaces one CID per bucket
-   * — the freshest within the bucket window — which is the most
-   * useful audit anchor for that bucket without ballooning the
-   * response shape into a per-row array.
+   * aggregation bucket, COALESCE(final_ipfs_cid, ipfs_cid) under the
+   * schema 1.1 pin-twice flow. Null when none of the rows in the
+   * bucket have been pinned. Each bucket may collapse multiple TWAP
+   * rows; this surfaces one CID per bucket — the freshest within the
+   * bucket window — which is the most useful audit anchor for that
+   * bucket without ballooning the response shape into a per-row array.
    */
   ipfs_cid: string | null;
+  /**
+   * 'final' when the surfaced ipfs_cid points to a schema 1.1
+   * manifest with index_snapshot populated, 'pre_cohort' when it
+   * points to one with index_snapshot=null, null when ipfs_cid is null.
+   */
+  pin_state: PinState | null;
 }
 
 export async function getPeptidePriceHistoryHandler(req: Request, res: Response): Promise<void> {
@@ -165,7 +173,7 @@ export async function getPeptidePriceHistoryHandler(req: Request, res: Response)
   // 4. TWAP commits in window — used for the twap_series block.
   const { data: twapRows, error: tErr } = await supabase
     .from('twap_commits')
-    .select('twap_value, computed_at, ipfs_cid')
+    .select('twap_value, computed_at, ipfs_cid, final_ipfs_cid')
     .eq('peptide_code', peptide.code)
     .eq('status', 'finalized')
     .gte('computed_at', windowStart.toISOString())
@@ -281,12 +289,13 @@ function aggregateVendorSeries(
  */
 function aggregateTwapSeries(rows: TwapRow[], aggregation: 'daily' | 'hourly'): TwapPoint[] {
   // Track the freshest computed_at within each bucket so we can pick
-  // the most recent row's ipfs_cid as the bucket's audit anchor.
+  // the most recent row's pin info as the bucket's audit anchor.
   interface BucketAcc {
     sum: number;
     count: number;
     latestMs: number;
     latestCid: string | null;
+    latestPinState: PinState | null;
   }
   const buckets = new Map<string, BucketAcc>();
   for (const row of rows) {
@@ -295,21 +304,23 @@ function aggregateTwapSeries(rows: TwapRow[], aggregation: 'daily' | 'hourly'): 
     const value = Number(row.twap_value);
     if (!Number.isFinite(value) || value <= 0) continue;
     const ms = Date.parse(row.computed_at);
-    const cid = row.ipfs_cid ?? null;
+    const pin = resolvePinFields(row);
     const acc = buckets.get(bucket);
     if (acc) {
       acc.sum += value;
       acc.count += 1;
       if (Number.isFinite(ms) && ms > acc.latestMs) {
         acc.latestMs = ms;
-        acc.latestCid = cid;
+        acc.latestCid = pin.ipfs_cid;
+        acc.latestPinState = pin.pin_state;
       }
     } else {
       buckets.set(bucket, {
         sum: value,
         count: 1,
         latestMs: Number.isFinite(ms) ? ms : 0,
-        latestCid: cid,
+        latestCid: pin.ipfs_cid,
+        latestPinState: pin.pin_state,
       });
     }
   }
@@ -319,6 +330,7 @@ function aggregateTwapSeries(rows: TwapRow[], aggregation: 'daily' | 'hourly'): 
       twap_value_usd_per_mg: round4(acc.sum / acc.count),
       cycle_count: acc.count,
       ipfs_cid: acc.latestCid,
+      pin_state: acc.latestPinState,
     }))
     .sort((a, b) => a.timestamp.localeCompare(b.timestamp));
 }

@@ -19,6 +19,11 @@ import { getPeptidePriceHistoryHandler } from "./routes/v1/peptide-price-history
 import { verifyObservationHandler } from "./routes/v1/verify";
 import { getResearchHandler } from "./routes/v1/research";
 import {
+  getIndexComponentsHandler,
+  getIndexCurrentHandler,
+  getIndexHistoryHandler,
+} from "./routes/v1/index-routes";
+import {
   getAnomalyHandler,
   jsonFeedAnomaliesHandler,
   listAnomaliesHandler,
@@ -275,6 +280,17 @@ export function buildApp(options: BuildAppOptions = {}): express.Express {
   app.get("/v1/twaps/:id", cacheFor(3600), asyncRoute(getTwapHandler));
   app.get("/v1/verify/observation/:id", cacheFor(3600), asyncRoute(verifyObservationHandler));
   app.get("/v1/research/:code", cacheFor(300), asyncRoute(getResearchHandler));
+
+  // ─── BioHash Peptide Index (schema 1.1) ────────────────────────
+  // Hourly equal-weight index level over the 29-peptide v1 cohort,
+  // computed by the oracle service (apps/oracle/src/index-history-runner.ts)
+  // and persisted to public.index_history. /current and /components
+  // serve the latest row; /history is a chart-friendly time series.
+  // 30-60s cache TTLs match the underlying data churn (1 row per
+  // UTC hour) and align with /v1/cycles cache budget.
+  app.get("/v1/index/current", cacheFor(30), asyncRoute(getIndexCurrentHandler));
+  app.get("/v1/index/history", cacheFor(60), asyncRoute(getIndexHistoryHandler));
+  app.get("/v1/index/components", cacheFor(30), asyncRoute(getIndexComponentsHandler));
 
   // ─── /api/anomalies — public append-only operational log ──────────
   // 60 req/min/IP per spec. The X-Admin-Token bypass lets our own

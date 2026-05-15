@@ -220,3 +220,32 @@ export async function setTwapIpfsCid(
   `;
   return rows[0]?.updated ?? 0;
 }
+
+/**
+ * Persist the IPFS CID of the SCHEMA 1.1 final pin -- the manifest
+ * pinned after the cohort completes for the hour and the index_snapshot
+ * gets populated. Sibling of setTwapIpfsCid above. Same idempotency
+ * pattern: the WHERE guard on `final_ipfs_cid IS NULL` makes a
+ * double-write a no-op rather than a corruption, which matters because
+ * the cohort-completion path may fire from two sources (the in-process
+ * trigger after the cohort-completing markFinalizedTwap, and the
+ * startup recovery path on oracle restart).
+ *
+ * See migration 0044 for the column rationale and the pin-twice design.
+ */
+export async function setTwapFinalIpfsCid(
+  sql: SqlClient,
+  args: { id: string; cid: string },
+): Promise<number> {
+  const rows = await sql<{ updated: number }[]>`
+    WITH updated AS (
+      UPDATE public.twap_commits
+      SET    final_ipfs_cid = ${args.cid}
+      WHERE  id              = ${args.id}
+        AND  final_ipfs_cid IS NULL
+      RETURNING 1 AS updated
+    )
+    SELECT count(*)::int AS updated FROM updated
+  `;
+  return rows[0]?.updated ?? 0;
+}

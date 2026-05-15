@@ -68,6 +68,27 @@ export interface OracleHealthState {
     failed_count_24h: number;
   };
 
+  /**
+   * BioHash Peptide Index runtime status (schema 1.1 / migration 0043).
+   *
+   *   - cohort_size: 0 when index_baselines is empty (pre-launch), N
+   *     otherwise. Reflects the cached cohort the IndexComputer was
+   *     built with at startup.
+   *   - last_commit_at: ISO timestamp of the most recent successful
+   *     index_history INSERT. Null until the first cohort-completion
+   *     handler runs.
+   *   - committed_count_24h: incremented on every successful insert,
+   *     decayed on no special schedule (running counter; the 24h
+   *     framing is a convention, not enforced). Surfaced for ops
+   *     visibility. The liveness check below uses last_commit_at
+   *     staleness as the canonical degradation signal.
+   */
+  index: {
+    cohort_size: number;
+    last_commit_at: string | null;
+    committed_count_24h: number;
+  };
+
   rpc: {
     primary: string;
     last_error_at: string | null;
@@ -141,6 +162,12 @@ export function buildInitialState(args: {
       last_committed_cycle_id: null,
       in_flight_count: 0,
       failed_count_24h: 0,
+    },
+
+    index: {
+      cohort_size: 0,
+      last_commit_at: null,
+      committed_count_24h: 0,
     },
 
     twap: {
@@ -217,6 +244,20 @@ export function isHealthy(
   const twapStaleMs = now - Date.parse(state.twap.last_commit_at);
   const twapBudget = opts.staleThresholdMs * (opts.twapStalenessMultiplier ?? 3);
   if (twapStaleMs > twapBudget) return false;
+
+  // BioHash Peptide Index degradation rule (Step 8 of the index work):
+  // zero index_history rows in the last 24 hours means the cohort
+  // never completed for any hour in a day, i.e. the index is stuck.
+  // Skipped if the cohort is empty (pre-launch state, index_baselines
+  // has no rows) so the oracle can boot and ship TWAPs before the
+  // baseline backfill runs. Once cohort_size > 0, the 24h staleness
+  // rule is enforced.
+  if (state.index.cohort_size > 0) {
+    if (!state.index.last_commit_at) return false;
+    const indexStaleMs = now - Date.parse(state.index.last_commit_at);
+    const INDEX_STALE_BUDGET_MS = 24 * 60 * 60 * 1000;
+    if (indexStaleMs > INDEX_STALE_BUDGET_MS) return false;
+  }
 
   return true;
 }

@@ -11,6 +11,12 @@ import { initAnomalyLog, logAnomaly } from "@peptide-oracle/shared";
 import { runCyclePoller } from "./pollers/cycle-poller";
 import { runLongTailPoller } from "./pollers/long-tail-poller";
 import { runTwapPoller } from "./pollers/twap-poller";
+import {
+  createIndexComputer,
+  loadIndexBaselines,
+  type IndexComputer,
+} from "./index-computer";
+import { runStartupRecovery } from "./index-history-runner";
 import { OracleSolanaClient } from "./solana/client";
 import { loadOracleKeypair } from "./solana/keypair";
 import { PegPusher } from "./peg/peg-pusher";
@@ -177,6 +183,54 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
+  // BioHash Peptide Index (schema 1.1): load the v1 cohort from
+  // public.index_baselines ONCE and freeze it into an IndexComputer
+  // for the lifetime of this process. The cohort is identity, not
+  // a runtime knob -- see loadIndexBaselines's lifecycle comment
+  // for the restart-required semantics if an operator ever mutates
+  // index_baselines while the oracle is running. The runner stays
+  // null only when the table is empty (pre-launch), in which case
+  // the existing first-pin path continues to function and emits
+  // schema 1.1 manifests with index_snapshot=null.
+  let indexComputer: IndexComputer | null = null;
+  try {
+    const baselines = await loadIndexBaselines(sql);
+    if (baselines.length === 0) {
+      console.warn(
+        "[startup] index_baselines is empty; BioHash Peptide Index disabled. " +
+          "Run apps/oracle/scripts/compute-baseline-twaps.ts --apply to " +
+          "populate the table and restart.",
+      );
+    } else {
+      indexComputer = createIndexComputer(baselines);
+      health.index.cohort_size = indexComputer.cohortSize();
+      console.log(
+        `[startup] index cohort loaded: N=${indexComputer.cohortSize()} ` +
+          `(peptides=${indexComputer.cohortPeptideCodes().slice(0, 4).join(",")}...)`,
+      );
+      // Startup recovery runs to completion BEFORE the pollers begin
+      // ticking. This closes two gap classes deterministically: Case D
+      // (oracle killed mid-INSERT into index_history) and Case C
+      // (oracle killed mid-repin-loop with ipfs_cids still null). Both
+      // are idempotent under the same ON CONFLICT and IS NULL guards
+      // the in-process trigger uses, so a clean shutdown leaves
+      // nothing to recover and this completes near-instantly.
+      try {
+        await runStartupRecovery(sql, indexComputer, health.index);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(
+          `[startup] runStartupRecovery failed (non-fatal, continuing): ${msg}`,
+        );
+      }
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(
+      `[startup] loadIndexBaselines failed; index disabled (non-fatal): ${msg}`,
+    );
+  }
+
   // Construct the peg pusher (or null when disabled). Uses its own
   // Connection — same RPC URL + same keypair as the cycle/TWAP
   // pollers, but the AnchorProvider underneath wants a web3.js
@@ -257,6 +311,7 @@ async function main(): Promise<void> {
         confirmationTimeoutMs: config.confirmation.timeoutMs,
         cluster: config.solanaCluster,
         pegPusher,
+        indexComputer,
       }),
     ]);
     console.log("[shutdown] all pollers exited");

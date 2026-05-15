@@ -26,7 +26,7 @@ import {
  */
 
 const SAMPLE_MANIFEST: CycleManifest = {
-  version: '1.0',
+  version: '1.1',
   peptide_code: 'BPC157',
   cycle_id: 4242,
   computed_at: '2026-05-13T18:00:00.000Z',
@@ -49,6 +49,7 @@ const SAMPLE_MANIFEST: CycleManifest = {
       deviation_from_median_bps: 4612,
     },
   ],
+  index_snapshot: null,
 };
 
 beforeEach(() => {
@@ -137,7 +138,7 @@ describe('pinCycleToIPFS — happy path', () => {
     });
 
     expect(captured).toMatchObject({
-      pinataContent: { peptide_code: 'BPC157', cycle_id: 4242, version: '1.0' },
+      pinataContent: { peptide_code: 'BPC157', cycle_id: 4242, version: '1.1' },
       pinataMetadata: {
         name: 'biohash-cycle-4242-BPC157',
         keyvalues: {

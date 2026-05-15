@@ -92,10 +92,12 @@ describe('buildCycleManifest', () => {
       observation_set_root: '0xaabbccddeeff00112233445566778899aabbccddeeff00112233445566778899',
       solana_signature: '3tYeH9wTcDfo',
       solana_slot: 419467611,
+      index_snapshot: null,
     });
 
     expect(callCount()).toBe(2);
-    expect(m.version).toBe('1.0');
+    expect(m.version).toBe('1.1');
+    expect(m.index_snapshot).toBeNull();
     expect(m.peptide_code).toBe('BPC157');
     expect(m.cycle_id).toBe(4242);
     expect(m.algorithm).toBe('filtered_median_v1');
@@ -172,6 +174,7 @@ describe('buildCycleManifest', () => {
       observation_set_root: '0x' + '00'.repeat(32),
       solana_signature: 'sig',
       solana_slot: 1,
+      index_snapshot: null,
     });
     expect(m.observations[0]!.deviation_from_median_bps).toBeNull();
   });
@@ -186,6 +189,7 @@ describe('buildCycleManifest', () => {
         observation_set_root: '0x' + '00'.repeat(32),
         solana_signature: 'sig',
         solana_slot: 1,
+        index_snapshot: null,
       }),
     ).rejects.toThrow(/no peptide_twaps row/);
   });
@@ -228,8 +232,79 @@ describe('buildCycleManifest', () => {
       observation_set_root: '0x' + '00'.repeat(32),
       solana_signature: 'sig',
       solana_slot: 1,
+      index_snapshot: null,
     });
     expect(m.observations).toHaveLength(2);
     expect(m.observations.every((o) => o.included_in_twap)).toBe(true);
+  });
+
+  it('embeds a populated index_snapshot at the top level (schema 1.1)', async () => {
+    const shellRows = [
+      { twap_id: 1, input_observation_ids: [1], dropped_observation_ids: [] },
+    ];
+    const obsRows = [
+      {
+        observation_id: 1,
+        observed_at: new Date('2026-05-13T17:55:00.000Z'),
+        raw_price: '5',
+        fx_rate_to_usd: '1',
+        price_usd_per_mg: '5.000000',
+        vendor_code: 'A',
+        vendor_url: 'https://a.example',
+        pack_size_mg: '1',
+      },
+    ];
+    const { sql } = makeSqlMock([shellRows, obsRows]);
+    const snapshot = {
+      level: 1024.137931,
+      baseline_date: '2026-05-03',
+      baseline_level: 1000,
+      components_hash:
+        'aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899',
+      computed_at: '2026-05-13T18:00:30.000Z',
+    };
+    const m = await buildCycleManifest(sql as never, {
+      peptide_code: 'BPC157',
+      computed_at: new Date('2026-05-13T18:00:00.000Z'),
+      twap_value: '5.0',
+      observation_set_root: '0x' + '00'.repeat(32),
+      solana_signature: 'sig',
+      solana_slot: 1,
+      index_snapshot: snapshot,
+    });
+    expect(m.index_snapshot).toEqual(snapshot);
+    expect(m.version).toBe('1.1');
+  });
+
+  it('always emits index_snapshot key (null, never omitted)', async () => {
+    const shellRows = [
+      { twap_id: 1, input_observation_ids: [1], dropped_observation_ids: [] },
+    ];
+    const obsRows = [
+      {
+        observation_id: 1,
+        observed_at: new Date('2026-05-13T17:55:00.000Z'),
+        raw_price: '5',
+        fx_rate_to_usd: '1',
+        price_usd_per_mg: '5.000000',
+        vendor_code: 'A',
+        vendor_url: 'https://a.example',
+        pack_size_mg: '1',
+      },
+    ];
+    const { sql } = makeSqlMock([shellRows, obsRows]);
+    const m = await buildCycleManifest(sql as never, {
+      peptide_code: 'BPC157',
+      computed_at: new Date('2026-05-13T18:00:00.000Z'),
+      twap_value: '5.0',
+      observation_set_root: '0x' + '00'.repeat(32),
+      solana_signature: 'sig',
+      solana_slot: 1,
+      index_snapshot: null,
+    });
+    expect(Object.prototype.hasOwnProperty.call(m, 'index_snapshot')).toBe(
+      true,
+    );
+    expect(m.index_snapshot).toBeNull();
   });
 });

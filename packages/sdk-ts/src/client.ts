@@ -5,6 +5,10 @@ import type {
   CycleDetail,
   CycleSummary,
   CyclesListEnvelope,
+  IndexComponentsResponse,
+  IndexCurrentResponse,
+  IndexHistoryParams,
+  IndexHistoryResponse,
   ListAnomaliesParams,
   ListCyclesParams,
   ObservationDetailResponse,
@@ -248,6 +252,78 @@ class AnomaliesAPI {
   }
 }
 
+/* ─── BioHash Peptide Index (v0.2.1) ──────────────────────────────── */
+
+/**
+ * BioHash Peptide Index resource. Three endpoints map to the three
+ * methods below:
+ *
+ *   - GET /v1/index/current      -> getIndex()
+ *   - GET /v1/index/history      -> getIndexHistory({ from?, to? })
+ *   - GET /v1/index/components   -> getIndexComponents()
+ *
+ * `from` / `to` accept either ISO 8601 strings or Date objects; the
+ * SDK normalises Dates to UTC ISO strings before serialising into the
+ * query string. Defaults match the server: window=30 days, max=365.
+ *
+ * The components response includes per-peptide contribution math so
+ * callers can render "which peptides moved the index" without
+ * recomputing the formula client-side.
+ */
+class IndexAPI {
+  constructor(private readonly http: HttpClient) {}
+
+  /** GET /v1/index/current -- latest hour from index_history. */
+  getIndex(opts?: { signal?: AbortSignal }): Promise<IndexCurrentResponse> {
+    return this.http.request<IndexCurrentResponse>({
+      method: "GET",
+      path: "/v1/index/current",
+      ...(opts?.signal ? { signal: opts.signal } : {}),
+    });
+  }
+
+  /**
+   * GET /v1/index/history?from=&to= -- time series. Window defaults
+   * to the last 30 days when neither bound is provided; the server
+   * caps the requested range at 365 days.
+   */
+  getIndexHistory(
+    params?: { from?: string | Date; to?: string | Date },
+    opts?: { signal?: AbortSignal },
+  ): Promise<IndexHistoryResponse> {
+    const query: IndexHistoryParams = {};
+    if (params?.from !== undefined) {
+      query.from = params.from instanceof Date ? params.from.toISOString() : params.from;
+    }
+    if (params?.to !== undefined) {
+      query.to = params.to instanceof Date ? params.to.toISOString() : params.to;
+    }
+    return this.http.request<IndexHistoryResponse>({
+      method: "GET",
+      path: "/v1/index/history",
+      ...(Object.keys(query).length > 0
+        ? { query: query as Record<string, unknown> }
+        : {}),
+      ...(opts?.signal ? { signal: opts.signal } : {}),
+    });
+  }
+
+  /**
+   * GET /v1/index/components -- per-peptide breakdown of the most
+   * recent index level. Includes baseline_twap, current_twap, weight,
+   * and the (current/baseline) * (baseline_level/N) contribution.
+   */
+  getIndexComponents(opts?: {
+    signal?: AbortSignal;
+  }): Promise<IndexComponentsResponse> {
+    return this.http.request<IndexComponentsResponse>({
+      method: "GET",
+      path: "/v1/index/components",
+      ...(opts?.signal ? { signal: opts.signal } : {}),
+    });
+  }
+}
+
 /* ─── Top-level client ────────────────────────────────────────────── */
 
 export class BioHash {
@@ -258,6 +334,8 @@ export class BioHash {
   public readonly verify: VerifyAPI;
   public readonly vendors: VendorsAPI;
   public readonly anomalies: AnomaliesAPI;
+  /** BioHash Peptide Index (SDK v0.2.1+). */
+  public readonly index: IndexAPI;
 
   private readonly http: HttpClient;
 
@@ -270,6 +348,28 @@ export class BioHash {
     this.verify = new VerifyAPI(this.http);
     this.vendors = new VendorsAPI(this.http);
     this.anomalies = new AnomaliesAPI(this.http);
+    this.index = new IndexAPI(this.http);
+  }
+
+  /**
+   * Top-level convenience: getIndex() == index.getIndex(). Provided
+   * so callers can write `await client.getIndex()` matching the
+   * sketch in the SDK v0.2.1 release notes. Same for getIndexHistory
+   * and getIndexComponents.
+   */
+  getIndex(opts?: { signal?: AbortSignal }): Promise<IndexCurrentResponse> {
+    return this.index.getIndex(opts);
+  }
+  getIndexHistory(
+    params?: { from?: string | Date; to?: string | Date },
+    opts?: { signal?: AbortSignal },
+  ): Promise<IndexHistoryResponse> {
+    return this.index.getIndexHistory(params, opts);
+  }
+  getIndexComponents(opts?: {
+    signal?: AbortSignal;
+  }): Promise<IndexComponentsResponse> {
+    return this.index.getIndexComponents(opts);
   }
 
   /** The resolved base URL the client is hitting (trailing slashes stripped). */

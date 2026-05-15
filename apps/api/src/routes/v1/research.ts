@@ -3,6 +3,7 @@ import { adminClientUntyped } from '../../supabase';
 import { solscanUrl, solanaExplorerUrl, type SolanaCluster } from '../../oracle-config';
 import { clusterQuerySchema } from '../../validators';
 import { sendError } from '../../errors';
+import { resolvePinFields, type PinState } from '../../lib/pin-state';
 
 /**
  * GET /v1/research/:code — BioHash Peptide Research Index detail page.
@@ -135,7 +136,7 @@ export async function getResearchHandler(req: Request, res: Response): Promise<v
   let historyQuery = supabase
     .from('twap_commits')
     .select(
-      'id, twap_value, computed_at, window_start, window_end, observation_set_root, status, solana_signature, solana_slot, finalized_at, cluster, ipfs_cid',
+      'id, twap_value, computed_at, window_start, window_end, observation_set_root, status, solana_signature, solana_slot, finalized_at, cluster, ipfs_cid, final_ipfs_cid, index_level',
     )
     .eq('peptide_code', peptide.code)
     .gte('computed_at', since)
@@ -154,7 +155,7 @@ export async function getResearchHandler(req: Request, res: Response): Promise<v
   // commit is still 'submitted').
   let currentTwapQuery = supabase
     .from('twap_commits')
-    .select('twap_value, computed_at, solana_signature, solana_slot, cluster, ipfs_cid')
+    .select('twap_value, computed_at, solana_signature, solana_slot, cluster, ipfs_cid, final_ipfs_cid, index_level')
     .eq('peptide_code', peptide.code)
     .eq('status', 'finalized')
     .order('computed_at', { ascending: false })
@@ -277,6 +278,8 @@ function shapeCurrentTwap(row: {
   solana_slot: number | string | null;
   cluster: string | null;
   ipfs_cid?: string | null;
+  final_ipfs_cid?: string | null;
+  index_level?: number | string | null;
 }): {
   twap_value: string;
   computed_at: string;
@@ -285,8 +288,11 @@ function shapeCurrentTwap(row: {
   cluster: SolanaCluster;
   solscan_url: string | null;
   ipfs_cid: string | null;
+  pin_state: PinState | null;
+  index_level: number | string | null;
 } {
   const c = rowCluster(row);
+  const pin = resolvePinFields(row);
   return {
     twap_value: String(row.twap_value),
     computed_at: row.computed_at,
@@ -299,11 +305,12 @@ function shapeCurrentTwap(row: {
           : row.solana_slot,
     cluster: c,
     solscan_url: row.solana_signature ? solscanUrl(row.solana_signature, c) : null,
-    // `ipfs_cid` is the audit-trail anchor for this TWAP commit's full
-    // observation set. Pinned by the oracle service after Solana
-    // finalization (apps/oracle/src/ipfs/). Null when pinning is
-    // disabled or has not yet succeeded for this row.
-    ipfs_cid: row.ipfs_cid ?? null,
+    // ipfs_cid is the audit-trail anchor for this TWAP commit's full
+    // observation set, COALESCE(final_ipfs_cid, ipfs_cid) under the
+    // schema 1.1 pin-twice flow (see lib/pin-state.ts, migration 0044).
+    ipfs_cid: pin.ipfs_cid,
+    pin_state: pin.pin_state,
+    index_level: row.index_level ?? null,
   };
 }
 
@@ -320,6 +327,8 @@ function shapeHistoryItem(row: {
   finalized_at: string | null;
   cluster: string | null;
   ipfs_cid?: string | null;
+  final_ipfs_cid?: string | null;
+  index_level?: number | string | null;
 }): {
   twap_id: string;
   twap_value: string;
@@ -338,8 +347,11 @@ function shapeHistoryItem(row: {
   } | null;
   finalized_at: string | null;
   ipfs_cid: string | null;
+  pin_state: PinState | null;
+  index_level: number | string | null;
 } {
   const c = rowCluster(row);
+  const pin = resolvePinFields(row);
   return {
     twap_id: row.id,
     twap_value: String(row.twap_value),
@@ -364,7 +376,9 @@ function shapeHistoryItem(row: {
         }
       : null,
     finalized_at: row.finalized_at,
-    ipfs_cid: row.ipfs_cid ?? null,
+    ipfs_cid: pin.ipfs_cid,
+    pin_state: pin.pin_state,
+    index_level: row.index_level ?? null,
   };
 }
 

@@ -33,7 +33,7 @@ const PINATA_PIN_JSON_URL = 'https://api.pinata.cloud/pinning/pinJSONToIPFS';
 export const TWAP_ALGO_V1 = 'filtered_median_v1';
 
 /**
- * Cycle manifest schema — version 1.0.
+ * Cycle manifest schema — version 1.1.
  *
  * Pinned per-finalized-TWAP-commit. Every field here is recoverable
  * from the oracle's DB at the moment of finalization; the IPFS body
@@ -44,6 +44,29 @@ export const TWAP_ALGO_V1 = 'filtered_median_v1';
  * `cycle_id` is the `peptide_twaps.id` (bigint) — i.e. the row in the
  * worker's TWAP table that this commit anchors. Not the same as
  * `commit_cycles.cycle_id` (which is per-scrape, not per-TWAP).
+ *
+ * 1.0 -> 1.1 (BioHash Peptide Index, migration 0043):
+ *
+ *   Adds the top-level `index_snapshot` field carrying the equal-weight
+ *   index level computed for the same UTC hour as this commit. The
+ *   level is null when fewer than the cohort-size peptides finalized
+ *   for the hour (per spec: partial hours are skipped, the index is
+ *   not computed). When non-null, the same {level, components_hash}
+ *   appears in every per-peptide manifest pinned for that hour, and
+ *   matches the row written to public.index_history.
+ *
+ *   See apps/oracle/src/index-computer.ts for the formula and the
+ *   canonical-JSON convention used by components_hash. Auditors can
+ *   reproduce the hash byte-for-byte in any language by:
+ *     (1) loading the cohort's per-peptide TWAPs for the hour;
+ *     (2) sorting by peptide_code (UTF-16 / ASCII byte order);
+ *     (3) building objects with keys {peptide_code, twap_value,
+ *         weight: 1/N} in that order, where N is the cohort size;
+ *     (4) JSON-serializing without whitespace and using the shortest
+ *         round-trip decimal for each Number (the ECMA-262 §6.1.6.1.13
+ *         algorithm, also produced by Python repr(), Go strconv with
+ *         'g' / -1, Rust {} format);
+ *     (5) sha256 of the resulting bytes, lowercase hex.
  *
  * Forward-compat note (re: included_in_twap / exclusion_reason):
  *
@@ -60,7 +83,7 @@ export const TWAP_ALGO_V1 = 'filtered_median_v1';
  *   for kept rows.
  */
 export interface CycleManifest {
-  version: '1.0';
+  version: '1.1';
   peptide_code: string;
   cycle_id: number;
   computed_at: string;
@@ -71,6 +94,39 @@ export interface CycleManifest {
   solana_signature: string;
   solana_slot: number;
   observations: ManifestObservation[];
+  /**
+   * Equal-weight BioHash Peptide Index snapshot for the UTC hour this
+   * commit belongs to. Null when fewer than the cohort-size peptides
+   * finalized for the hour (per spec: partial hours are skipped, no
+   * partial index). The same {level, components_hash} appears in
+   * every per-peptide manifest pinned for the same hour and matches
+   * the row in public.index_history.
+   */
+  index_snapshot: IndexSnapshot | null;
+}
+
+/**
+ * Top-level snapshot of the equal-weight BioHash Peptide Index level
+ * for the same UTC hour as the enclosing CycleManifest.
+ *
+ *   level             — sum over cohort of (twap_i / baseline_i) *
+ *                       (baseline_level / N).
+ *   baseline_date     — ISO date (YYYY-MM-DD) of the configured
+ *                       baseline, shared across the cohort.
+ *   baseline_level    — Configured baseline level, currently 1000.00.
+ *   components_hash   — sha256 hex of the canonical components vector
+ *                       (see CycleManifest header comment for the
+ *                       exact serialization).
+ *   computed_at       — ISO timestamp when the level was computed
+ *                       (when the last cohort peptide finalized for
+ *                       the hour).
+ */
+export interface IndexSnapshot {
+  level: number;
+  baseline_date: string;
+  baseline_level: number;
+  components_hash: string;
+  computed_at: string;
 }
 
 export interface ManifestObservation {

@@ -421,11 +421,11 @@ verifier needs to recompute the merkle root from raw inputs.
 In both cases the Solana commit is still authoritative — the IPFS
 layer is additive, not blocking.
 
-**Manifest schema (version 1.0)**:
+**Manifest schema (version 1.1)**:
 
 ```jsonc
 {
-  "version": "1.0",
+  "version": "1.1",
   "peptide_code": "BPC157",
   "cycle_id": 4242,
   "computed_at": "2026-05-13T18:00:00.000Z",
@@ -448,8 +448,54 @@ layer is additive, not blocking.
       "deviation_from_median_bps": 4612
     }
     // ... one entry per supplier_observation in the input + dropped sets
-  ]
+  ],
+  "index_snapshot": {
+    "level": 1024.137931,
+    "baseline_date": "2026-05-03",
+    "baseline_level": 1000,
+    "components_hash": "aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899",
+    "computed_at": "2026-05-13T18:00:30.000Z"
+  }
 }
+```
+
+**`index_snapshot` (added in 1.1)**: equal-weight BioHash Peptide Index
+level for the same UTC hour as this commit. Null when fewer than the
+cohort-size peptides finalized for the hour (per spec, partial hours
+are skipped). When non-null, the same `{level, components_hash}`
+appears in every per-peptide manifest pinned for the same hour and
+matches the row in `public.index_history`.
+
+`components_hash` is reproducible byte-for-byte in any language:
+
+1. Load the cohort's per-peptide TWAPs for the hour. The cohort is the
+   set of `peptide_code` values in `public.index_baselines`, locked at
+   index launch.
+2. Sort by `peptide_code` ASC. For ASCII-only codes (the v1 cohort),
+   any byte-lexicographic sort works. JavaScript uses UTF-16
+   code-unit order via `<`/`>`; Python `sorted(...)`, Go
+   `sort.Slice(...)`, Rust `sort_by_key(...)` produce the same order.
+3. Build objects with the keys `{peptide_code, twap_value, weight}` in
+   that exact order, where `weight = 1 / N` and N is the cohort size
+   (29 at v1 launch).
+4. JSON-serialize without whitespace. Numbers use the shortest
+   round-trip decimal representation (ECMA-262 §6.1.6.1.13). Python
+   `repr()`, Go `strconv.FormatFloat(x, 'g', -1, 64)`, and Rust
+   `format!("{}", x)` produce the same string.
+5. `sha256` of the resulting bytes, lowercase hex.
+
+Verifier example (Python, N=29 cohort, single non-trivial peptide):
+
+```python
+import hashlib, json
+components = sorted(
+    [{"peptide_code": code, "twap_value": twap, "weight": 1/29}
+     for code, twap in twaps_by_peptide.items()],
+    key=lambda c: c["peptide_code"],
+)
+canonical = json.dumps(components, separators=(",", ":"))
+h = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+assert h == manifest["index_snapshot"]["components_hash"]
 ```
 
 `deviation_from_median_bps` is `round(|price − twap_value| / twap_value × 10_000)`,

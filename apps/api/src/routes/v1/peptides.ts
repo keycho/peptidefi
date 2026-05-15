@@ -3,6 +3,7 @@ import { adminClientUntyped } from '../../supabase';
 import { solscanUrl, solanaExplorerUrl, type SolanaCluster } from '../../oracle-config';
 import { clusterQuerySchema } from '../../validators';
 import { sendError } from '../../errors';
+import { resolvePinFields, type PinState } from '../../lib/pin-state';
 
 function rowCluster(row: { cluster: string | null }): SolanaCluster {
   switch (row.cluster) {
@@ -42,9 +43,19 @@ interface CurrentTwap {
   solana_slot: number | null;
   cluster: SolanaCluster | null;
   solscan_url: string | null;
-  /** IPFS CID of the pinned cycle manifest (oracle service, fire-and-forget
-   *  after Solana finalization). Null when pinning is disabled or pending. */
+  /**
+   * IPFS CID of the pinned cycle manifest, COALESCE(final_ipfs_cid,
+   * ipfs_cid) under the schema 1.1 pin-twice flow. Null when no pin
+   * has succeeded yet for this row. See lib/pin-state.ts and
+   * docs/PUBLIC_API.md.
+   */
   ipfs_cid: string | null;
+  /**
+   * 'final' when ipfs_cid points to a schema 1.1 manifest with
+   * index_snapshot populated, 'pre_cohort' when it points to one with
+   * index_snapshot=null, null when ipfs_cid is null.
+   */
+  pin_state: PinState | null;
 }
 
 interface PeptideListItem {
@@ -83,7 +94,7 @@ export async function listPeptidesHandler(req: Request, res: Response): Promise<
   let twapQuery = supabase
     .from('twap_commits')
     .select(
-      'peptide_code, twap_value, computed_at, solana_signature, solana_slot, cluster, ipfs_cid',
+      'peptide_code, twap_value, computed_at, solana_signature, solana_slot, cluster, ipfs_cid, final_ipfs_cid',
     )
     .eq('status', 'finalized')
     .order('computed_at', { ascending: false });
@@ -112,6 +123,7 @@ export async function listPeptidesHandler(req: Request, res: Response): Promise<
   const items: PeptideListItem[] = (peptides ?? []).map((p) => {
     const latest = latestByCode.get(p.code);
     const latestCluster = latest ? rowCluster(latest) : null;
+    const pin = latest ? resolvePinFields(latest) : null;
     return {
       peptide_id: p.id,
       code: p.code,
@@ -129,7 +141,8 @@ export async function listPeptidesHandler(req: Request, res: Response): Promise<
               latest.solana_signature && latestCluster
                 ? solscanUrl(latest.solana_signature, latestCluster)
                 : null,
-            ipfs_cid: (latest as { ipfs_cid?: string | null }).ipfs_cid ?? null,
+            ipfs_cid: pin?.ipfs_cid ?? null,
+            pin_state: pin?.pin_state ?? null,
           }
         : null,
     };
@@ -172,7 +185,7 @@ export async function getPeptideHandler(req: Request, res: Response): Promise<vo
   let historyQuery = supabase
     .from('twap_commits')
     .select(
-      'id, peptide_code, twap_value, computed_at, window_start, window_end, observation_set_root, status, solana_signature, solana_slot, finalized_at, cluster, ipfs_cid',
+      'id, peptide_code, twap_value, computed_at, window_start, window_end, observation_set_root, status, solana_signature, solana_slot, finalized_at, cluster, ipfs_cid, final_ipfs_cid, index_level',
     )
     .eq('peptide_code', peptide.code)
     .gte('computed_at', sevenDaysAgo)
@@ -196,6 +209,7 @@ export async function getPeptideHandler(req: Request, res: Response): Promise<vo
     },
     twap_history: (history ?? []).map((t) => {
       const rowC = rowCluster(t);
+      const pin = resolvePinFields(t);
       return {
         twap_id: t.id,
         twap_value: String(t.twap_value),
@@ -215,7 +229,10 @@ export async function getPeptideHandler(req: Request, res: Response): Promise<vo
             }
           : null,
         finalized_at: t.finalized_at,
-        ipfs_cid: (t as { ipfs_cid?: string | null }).ipfs_cid ?? null,
+        ipfs_cid: pin.ipfs_cid,
+        pin_state: pin.pin_state,
+        index_level:
+          (t as { index_level?: number | string | null }).index_level ?? null,
       };
     }),
     history_window: { start: sevenDaysAgo, end: new Date().toISOString() },
