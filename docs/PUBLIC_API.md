@@ -460,11 +460,17 @@ layer is additive, not blocking.
 ```
 
 **`index_snapshot` (added in 1.1)**: equal-weight BioHash Peptide Index
-level for the same UTC hour as this commit. Null when fewer than the
-cohort-size peptides finalized for the hour (per spec, partial hours
-are skipped). When non-null, the same `{level, components_hash}`
-appears in every per-peptide manifest pinned for the same hour and
-matches the row in `public.index_history`.
+level for the same observation window as this commit. Null when fewer
+than the cohort-size peptides finalized for the window (per spec,
+partial windows are skipped). When non-null, the same `{level,
+components_hash}` appears in every per-peptide manifest pinned for the
+same window and matches the row in `public.index_history`.
+
+`index_history.hour_start` is the close-of-window timestamp from
+`twap_commits.computed_at` (typically `HH:59:00` UTC), not the
+top-of-hour boundary. Use it as an opaque identifier for "the index
+level for this hourly window"; do not assume any minute-level
+truncation.
 
 `components_hash` is reproducible byte-for-byte in any language:
 
