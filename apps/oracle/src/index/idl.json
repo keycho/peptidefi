@@ -1,0 +1,327 @@
+{
+  "address": "6U9YjCbaym1XaaFmPonE2LHn7mnkij99ZJPpSsHaAu9h",
+  "metadata": {
+    "name": "biohash_index_program",
+    "version": "0.1.0",
+    "spec": "0.1.0",
+    "description": "BioHash Peptide Index on-chain account program — V0.1."
+  },
+  "instructions": [
+    {
+      "name": "initialize_index_account",
+      "docs": [
+        "One-time initialization. Allocates the PDA, sets immutables,",
+        "captures the authority. `initialize_index_account` can only",
+        "succeed once because the `init` constraint on the account",
+        "causes a re-run to fail with `AccountAlreadyInitialized`."
+      ],
+      "discriminator": [
+        144,
+        193,
+        30,
+        160,
+        198,
+        218,
+        9,
+        224
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "index_account",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  101,
+                  112,
+                  116,
+                  105,
+                  100,
+                  101,
+                  95,
+                  105,
+                  110,
+                  100,
+                  101,
+                  120
+                ]
+              },
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  49
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "baseline_level",
+          "type": "u64"
+        },
+        {
+          "name": "baseline_timestamp",
+          "type": "i64"
+        },
+        {
+          "name": "cohort_size",
+          "type": "u8"
+        }
+      ]
+    },
+    {
+      "name": "update_index",
+      "docs": [
+        "Replace the current level with a fresh one from the oracle's",
+        "cohort-completion runner. `has_one = authority` enforces that",
+        "the signer matches the stored authority. The strict-greater-than",
+        "check on `hour_start_unix` rejects replays AND out-of-order",
+        "writes from a startup-recovery batch that arrived non-monotonic."
+      ],
+      "discriminator": [
+        102,
+        132,
+        25,
+        95,
+        6,
+        162,
+        53,
+        33
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "signer": true,
+          "relations": [
+            "index_account"
+          ]
+        },
+        {
+          "name": "index_account",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  101,
+                  112,
+                  116,
+                  105,
+                  100,
+                  101,
+                  95,
+                  105,
+                  110,
+                  100,
+                  101,
+                  120
+                ]
+              },
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  49
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "level",
+          "type": "u64"
+        },
+        {
+          "name": "hour_start_unix",
+          "type": "i64"
+        },
+        {
+          "name": "components_hash",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "accounts": [
+    {
+      "name": "PeptideIndexAccount",
+      "discriminator": [
+        82,
+        173,
+        0,
+        70,
+        202,
+        181,
+        249,
+        3
+      ]
+    }
+  ],
+  "events": [
+    {
+      "name": "IndexUpdated",
+      "discriminator": [
+        57,
+        221,
+        94,
+        47,
+        121,
+        227,
+        38,
+        114
+      ]
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "NonMonotonicHour",
+      "msg": "hour_start_unix must be strictly greater than the stored value"
+    }
+  ],
+  "types": [
+    {
+      "name": "IndexUpdated",
+      "docs": [
+        "Emitted on every successful `update_index`. Indexers can subscribe",
+        "to this for an event-driven view of the index time series without",
+        "repeatedly polling `getAccountInfo`."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "previous_level",
+            "type": "u64"
+          },
+          {
+            "name": "new_level",
+            "type": "u64"
+          },
+          {
+            "name": "hour_start_unix",
+            "type": "i64"
+          },
+          {
+            "name": "components_hash",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "slot",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "PeptideIndexAccount",
+      "docs": [
+        "Singleton index account. Layout-locked at v1: future schema",
+        "changes either go into `_reserved` or migrate to a new PDA.",
+        "",
+        "Total size (incl. 8-byte discriminator): 160 bytes."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "version",
+            "type": "u8"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          },
+          {
+            "name": "cohort_size",
+            "type": "u8"
+          },
+          {
+            "name": "_pad",
+            "type": {
+              "array": [
+                "u8",
+                5
+              ]
+            }
+          },
+          {
+            "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "baseline_level",
+            "type": "u64"
+          },
+          {
+            "name": "baseline_timestamp",
+            "type": "i64"
+          },
+          {
+            "name": "index_level",
+            "type": "u64"
+          },
+          {
+            "name": "hour_start_unix",
+            "type": "i64"
+          },
+          {
+            "name": "last_update_timestamp",
+            "type": "i64"
+          },
+          {
+            "name": "last_update_slot",
+            "type": "u64"
+          },
+          {
+            "name": "components_hash",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "_reserved",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

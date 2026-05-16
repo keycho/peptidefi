@@ -28,6 +28,7 @@ import { isPinataConfigured, pinCycleToIPFS } from '../ipfs/pinata';
 import { buildCycleManifest } from '../ipfs/manifest-builder';
 import type { IndexComputer } from '../index-computer';
 import { runCohortCompletionForHour } from '../index-history-runner';
+import type { IndexAccountWriter } from '../solana/index-account-writer';
 
 /**
  * TWAP commit poller — Phase D scope (§3.3).
@@ -93,6 +94,14 @@ export interface TwapPollerOptions {
    * existing first-pin path still runs unchanged.
    */
   indexComputer?: IndexComputer | null;
+  /**
+   * Optional on-chain index account writer (schema 1.1). When
+   * provided, every successful index_history INSERT fires a
+   * detached call to update_index on the PDA. Null when
+   * ORACLE_INDEX_PROGRAM_ID is unset; the oracle still writes
+   * DB + IPFS unchanged in that case.
+   */
+  indexAccountWriter?: IndexAccountWriter | null;
 }
 
 export async function runTwapPoller(opts: TwapPollerOptions): Promise<void> {
@@ -729,6 +738,7 @@ function triggerCohortCompletionBestEffort(
         computer,
         hourStart,
         opts.health.index,
+        opts.indexAccountWriter ?? null,
       );
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);

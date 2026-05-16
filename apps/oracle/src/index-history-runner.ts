@@ -55,6 +55,10 @@ import {
   pinCycleToIPFS,
   type IndexSnapshot,
 } from './ipfs/pinata';
+import {
+  triggerIndexAccountWriteBestEffort,
+  type IndexAccountWriter,
+} from './solana/index-account-writer';
 
 /**
  * Optional health-state surface for the cohort-completion runner.
@@ -93,9 +97,16 @@ export async function runCohortCompletionForHour(
   computer: IndexComputer,
   hourStart: Date,
   healthSink?: IndexHealthSink | null,
+  indexAccountWriter?: IndexAccountWriter | null,
 ): Promise<void> {
   try {
-    await runCohortCompletionForHourInner(sql, computer, hourStart, healthSink ?? null);
+    await runCohortCompletionForHourInner(
+      sql,
+      computer,
+      hourStart,
+      healthSink ?? null,
+      indexAccountWriter ?? null,
+    );
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(
@@ -109,6 +120,7 @@ async function runCohortCompletionForHourInner(
   computer: IndexComputer,
   hourStart: Date,
   healthSink: IndexHealthSink | null,
+  indexAccountWriter: IndexAccountWriter | null,
 ): Promise<void> {
   // Cohort completion check. Compares the count of finalized cohort
   // rows for the hour against the cohort size. Source of truth for
@@ -223,6 +235,24 @@ async function runCohortCompletionForHourInner(
   if (healthSink) {
     healthSink.last_commit_at = new Date().toISOString();
     healthSink.committed_count_24h += 1;
+  }
+
+  // On-chain index account write (schema 1.1). Fire-and-forget,
+  // mirrors the pin + peg-pusher pattern. The runner is the only
+  // place that holds both the freshly-computed level and the
+  // already-pinned components_hash, so we fire here rather than
+  // re-reading from index_history downstream. Sanity check the
+  // canonical minute=59 cadence before writing; off-pattern hours
+  // should never reach this point (the SQL filter at scan sites
+  // excludes them), but the cheap guard keeps the on-chain account
+  // from ever recording an artifact-driven write.
+  if (indexAccountWriter && hourStart.getUTCMinutes() === 59) {
+    triggerIndexAccountWriteBestEffort(indexAccountWriter, {
+      level: result.level,
+      hourStartUnix: Math.floor(hourStart.getTime() / 1000),
+      componentsHash: result.components_hash,
+      hourStartIso,
+    });
   }
 
   // Per-row UPDATE. WHERE index_level IS NULL keeps it idempotent
@@ -388,6 +418,7 @@ export async function runStartupRecovery(
   sql: SqlClient,
   computer: IndexComputer,
   healthSink?: IndexHealthSink | null,
+  indexAccountWriter?: IndexAccountWriter | null,
 ): Promise<void> {
   console.log('[startup-recovery] scanning for incomplete index hours');
 
@@ -417,7 +448,13 @@ export async function runStartupRecovery(
         `hour(s) missing from index_history; reprocessing`,
     );
     for (const r of missingIndexRows) {
-      await runCohortCompletionForHour(sql, computer, r.hour_start, healthSink);
+      await runCohortCompletionForHour(
+        sql,
+        computer,
+        r.hour_start,
+        healthSink,
+        indexAccountWriter,
+      );
     }
   }
 
