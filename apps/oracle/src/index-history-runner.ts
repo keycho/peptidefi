@@ -163,6 +163,11 @@ async function runCohortCompletionForHourInner(
     return;
   }
 
+  // Capture exact input value (ISO form) before the INSERT so the
+  // round-trip check below can compare byte-for-byte against what
+  // postgres returned via RETURNING hour_start.
+  const hourStartIso = hourStart.toISOString();
+
   // INSERT under the hour_start PK mutex. Only one racer's INSERT
   // returns a row; everyone else bails out here without touching
   // per-row columns or kicking off pins.
@@ -171,7 +176,7 @@ async function runCohortCompletionForHourInner(
       (hour_start, level, components_hash, computed_at,
        baseline_date, baseline_level, ipfs_cids)
     VALUES
-      (${hourStart},
+      (${hourStart}::timestamptz,
        ${result.level}::numeric,
        ${result.components_hash},
        ${result.computed_at},
@@ -188,8 +193,25 @@ async function runCohortCompletionForHourInner(
     return;
   }
 
+  // Defensive check: pg has historically stored hour_start with
+  // minute=0 instead of minute=59. Cause not fully root-caused; the
+  // explicit ::timestamptz cast above should prevent it, but the
+  // guard is cheap insurance. On mismatch: the index_history row
+  // already exists with whatever postgres stored, but we refuse to
+  // run the per-row UPDATE, repin loop, or ipfs_cids snapshot for
+  // this hour -- manual cleanup expected, no auto-delete.
+  const writtenIso = inserted[0]!.hour_start.toISOString();
+  if (writtenIso !== hourStartIso) {
+    console.error(
+      `[index-history-runner] index_history_corrupted_row ` +
+        `expected=${hourStartIso} got=${writtenIso} ` +
+        `action="skipping downstream updates, manual cleanup required"`,
+    );
+    return;
+  }
+
   console.log(
-    `[index-history-runner] hour=${hourStart.toISOString()} ` +
+    `[index-history-runner] hour=${hourStartIso} ` +
       `index_history WROTE level=${result.level.toFixed(6)} ` +
       `components_hash=${result.components_hash.slice(0, 12)}... ` +
       `cohort_n=${row.cohort_n}`,
@@ -254,12 +276,34 @@ async function runCohortCompletionForHourInner(
     );
     let ok = 0;
     let failed = 0;
-    for (const res of repinResults) {
-      if (res.status === 'fulfilled') ok += 1;
-      else failed += 1;
+    // Surface the actual Pinata reason for each rejected repin.
+    // pinCycleToIPFS throws an Error whose message is
+    //   "pinCycleToIPFS: pin failed: HTTP <status> <statusText> — <body>"
+    // with up to 500 bytes of response body. Without this loop the
+    // aggregate counter below swallowed every per-peptide reason,
+    // making rate-limit vs auth vs cap-hit indistinguishable.
+    for (let i = 0; i < repinResults.length; i++) {
+      const res = repinResults[i]!;
+      if (res.status === 'fulfilled') {
+        ok += 1;
+        continue;
+      }
+      failed += 1;
+      const row = rowsForRepin[i]!;
+      const reason =
+        res.reason instanceof Error
+          ? res.reason.message
+          : String(res.reason);
+      console.error(
+        `[index-history-runner] repin_failed ` +
+          `hour=${hourStartIso} ` +
+          `peptide=${row.peptide_code} ` +
+          `id=${row.id} ` +
+          `reason=${JSON.stringify(reason)}`,
+      );
     }
     console.log(
-      `[index-history-runner] hour=${hourStart.toISOString()} ` +
+      `[index-history-runner] hour=${hourStartIso} ` +
         `repin: ok=${ok} failed=${failed} total=${repinResults.length}`,
     );
   }
