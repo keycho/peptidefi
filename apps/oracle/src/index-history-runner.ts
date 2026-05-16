@@ -163,6 +163,11 @@ async function runCohortCompletionForHourInner(
     return;
   }
 
+  // Capture exact input value (ISO form) before the INSERT so the
+  // round-trip check below can compare byte-for-byte against what
+  // postgres returned via RETURNING hour_start.
+  const hourStartIso = hourStart.toISOString();
+
   // INSERT under the hour_start PK mutex. Only one racer's INSERT
   // returns a row; everyone else bails out here without touching
   // per-row columns or kicking off pins.
@@ -171,7 +176,7 @@ async function runCohortCompletionForHourInner(
       (hour_start, level, components_hash, computed_at,
        baseline_date, baseline_level, ipfs_cids)
     VALUES
-      (${hourStart},
+      (${hourStart}::timestamptz,
        ${result.level}::numeric,
        ${result.components_hash},
        ${result.computed_at},
@@ -188,8 +193,25 @@ async function runCohortCompletionForHourInner(
     return;
   }
 
+  // Defensive check: pg has historically stored hour_start with
+  // minute=0 instead of minute=59. Cause not fully root-caused; the
+  // explicit ::timestamptz cast above should prevent it, but the
+  // guard is cheap insurance. On mismatch: the index_history row
+  // already exists with whatever postgres stored, but we refuse to
+  // run the per-row UPDATE, repin loop, or ipfs_cids snapshot for
+  // this hour -- manual cleanup expected, no auto-delete.
+  const writtenIso = inserted[0]!.hour_start.toISOString();
+  if (writtenIso !== hourStartIso) {
+    console.error(
+      `[index-history-runner] index_history_corrupted_row ` +
+        `expected=${hourStartIso} got=${writtenIso} ` +
+        `action="skipping downstream updates, manual cleanup required"`,
+    );
+    return;
+  }
+
   console.log(
-    `[index-history-runner] hour=${hourStart.toISOString()} ` +
+    `[index-history-runner] hour=${hourStartIso} ` +
       `index_history WROTE level=${result.level.toFixed(6)} ` +
       `components_hash=${result.components_hash.slice(0, 12)}... ` +
       `cohort_n=${row.cohort_n}`,
