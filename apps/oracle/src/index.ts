@@ -17,6 +17,7 @@ import {
   type IndexComputer,
 } from "./index-computer";
 import { runStartupRecovery } from "./index-history-runner";
+import { IndexAccountWriter } from "./solana/index-account-writer";
 import { OracleSolanaClient } from "./solana/client";
 import { loadOracleKeypair } from "./solana/keypair";
 import { PegPusher } from "./peg/peg-pusher";
@@ -193,6 +194,7 @@ async function main(): Promise<void> {
   // the existing first-pin path continues to function and emits
   // schema 1.1 manifests with index_snapshot=null.
   let indexComputer: IndexComputer | null = null;
+  let baselinesLoaded = false;
   try {
     const baselines = await loadIndexBaselines(sql);
     if (baselines.length === 0) {
@@ -203,26 +205,12 @@ async function main(): Promise<void> {
       );
     } else {
       indexComputer = createIndexComputer(baselines);
+      baselinesLoaded = true;
       health.index.cohort_size = indexComputer.cohortSize();
       console.log(
         `[startup] index cohort loaded: N=${indexComputer.cohortSize()} ` +
           `(peptides=${indexComputer.cohortPeptideCodes().slice(0, 4).join(",")}...)`,
       );
-      // Startup recovery runs to completion BEFORE the pollers begin
-      // ticking. This closes two gap classes deterministically: Case D
-      // (oracle killed mid-INSERT into index_history) and Case C
-      // (oracle killed mid-repin-loop with ipfs_cids still null). Both
-      // are idempotent under the same ON CONFLICT and IS NULL guards
-      // the in-process trigger uses, so a clean shutdown leaves
-      // nothing to recover and this completes near-instantly.
-      try {
-        await runStartupRecovery(sql, indexComputer, health.index);
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        console.error(
-          `[startup] runStartupRecovery failed (non-fatal, continuing): ${msg}`,
-        );
-      }
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -262,6 +250,56 @@ async function main(): Promise<void> {
     );
   } else {
     console.log("[startup] peg pusher disabled");
+  }
+
+  // Construct the index account writer (schema 1.1 on-chain account).
+  // Null when ORACLE_INDEX_PROGRAM_ID is unset — the oracle continues
+  // to write DB + IPFS unchanged. Reuses the same Connection + keypair
+  // as the peg pusher; the writer wraps them in its own AnchorProvider.
+  let indexAccountWriter: IndexAccountWriter | null = null;
+  if (config.indexAccount.programId) {
+    try {
+      const indexConn = new Connection(config.rpcUrl, {
+        commitment: "confirmed",
+        confirmTransactionInitialTimeout: config.confirmation.timeoutMs,
+      });
+      indexAccountWriter = new IndexAccountWriter(indexConn, payer, {
+        programId: new PublicKey(config.indexAccount.programId),
+      });
+      console.log(
+        `[startup] index account writer enabled ` +
+          `program=${config.indexAccount.programId} ` +
+          `pda=${indexAccountWriter.indexPda.toBase58()}`,
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(
+        `[startup] ORACLE_INDEX_PROGRAM_ID set but writer construction failed ` +
+          `(non-fatal, on-chain write disabled): ${msg}`,
+      );
+      indexAccountWriter = null;
+    }
+  } else {
+    console.log("[startup] index account writer disabled (ORACLE_INDEX_PROGRAM_ID unset)");
+  }
+
+  // Startup recovery runs to completion BEFORE the pollers begin
+  // ticking. Closes two gap classes deterministically: Case D (oracle
+  // killed mid-INSERT into index_history) and Case C (oracle killed
+  // mid-repin-loop with ipfs_cids still null). Both are idempotent
+  // under the same ON CONFLICT and IS NULL guards the in-process
+  // trigger uses, so a clean shutdown leaves nothing to recover and
+  // this completes near-instantly. Runs AFTER the on-chain writer is
+  // constructed so backlogged hours also push to the index account.
+  if (baselinesLoaded && indexComputer) {
+    try {
+      await runStartupRecovery(sql, indexComputer, health.index, indexAccountWriter);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(
+        `[startup] runStartupRecovery failed (non-fatal, continuing): ${msg}`,
+      );
+    }
   }
 
   const healthServer = startHealthServer({
@@ -312,6 +350,7 @@ async function main(): Promise<void> {
         cluster: config.solanaCluster,
         pegPusher,
         indexComputer,
+        indexAccountWriter,
       }),
     ]);
     console.log("[shutdown] all pollers exited");

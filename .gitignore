@@ -56,6 +56,12 @@ next-env.d.ts
 target/
 **/*.rs.bk
 
+# anchor: local IDL extract dir + the disposable local-validator ledger
+# the anchor test harness spins up. Both are workspace-build artifacts;
+# the vendored production IDL lives at apps/oracle/src/index/idl.json.
+.anchor/
+test-ledger/
+
 # scripts/initialize-peg-mainnet.ts outputs (operator-machine-only;
 # contain the $bBPC157 mint keypair + signed-transaction journal).
 scripts/peg-mainnet-init-output.json

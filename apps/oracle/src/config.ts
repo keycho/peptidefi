@@ -115,6 +115,15 @@ const envSchema = z.object({
   PEG_PEPTIDES: z.string().optional(),
   PEG_PUSH_PRIORITY_FEE_LAMPORTS: z.coerce.number().int().nonnegative().default(1000),
   PEG_PUSH_MAX_RETRIES: z.coerce.number().int().nonnegative().default(3),
+
+  // ─── BioHash Peptide Index on-chain account ───────────────────
+  // Optional. When ORACLE_INDEX_PROGRAM_ID is set the oracle pushes
+  // each cohort-completed index level to the singleton PDA owned by
+  // the program ID. When unset the on-chain write is disabled and
+  // the oracle behaves exactly as before (DB + IPFS only). Devnet
+  // and mainnet have separate program IDs; the value is gated like
+  // PEG_PROGRAM_ID.
+  ORACLE_INDEX_PROGRAM_ID: z.string().optional(),
 });
 
 // ─── Public types ──────────────────────────────────────────────────────
@@ -176,6 +185,16 @@ export interface OracleConfig {
     peptideCodes: ReadonlySet<string>;
     priorityFeeMicroLamports: number;
     maxRetries: number;
+  };
+
+  /**
+   * BioHash Peptide Index on-chain account.
+   * `programId=null` (when ORACLE_INDEX_PROGRAM_ID is unset)
+   * disables the on-chain write subsystem entirely — the oracle
+   * continues to write DB + IPFS unchanged.
+   */
+  indexAccount: {
+    programId: string | null;
   };
 
   nodeEnv: string;
@@ -285,6 +304,14 @@ export function loadConfig(): OracleConfig {
     },
 
     pegPusher: parsePegPusherConfig(env),
+
+    indexAccount: {
+      // Optional, mirrors PEG_PROGRAM_ID gating. Validating the
+      // base58 shape would require a Solana import here that the
+      // schema file deliberately avoids. parsePublicKey at the call
+      // site in index.ts catches a malformed value.
+      programId: env.ORACLE_INDEX_PROGRAM_ID?.trim() || null,
+    },
 
     nodeEnv: env.NODE_ENV ?? "development",
   };
