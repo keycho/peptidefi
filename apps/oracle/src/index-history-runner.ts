@@ -276,12 +276,34 @@ async function runCohortCompletionForHourInner(
     );
     let ok = 0;
     let failed = 0;
-    for (const res of repinResults) {
-      if (res.status === 'fulfilled') ok += 1;
-      else failed += 1;
+    // Surface the actual Pinata reason for each rejected repin.
+    // pinCycleToIPFS throws an Error whose message is
+    //   "pinCycleToIPFS: pin failed: HTTP <status> <statusText> — <body>"
+    // with up to 500 bytes of response body. Without this loop the
+    // aggregate counter below swallowed every per-peptide reason,
+    // making rate-limit vs auth vs cap-hit indistinguishable.
+    for (let i = 0; i < repinResults.length; i++) {
+      const res = repinResults[i]!;
+      if (res.status === 'fulfilled') {
+        ok += 1;
+        continue;
+      }
+      failed += 1;
+      const row = rowsForRepin[i]!;
+      const reason =
+        res.reason instanceof Error
+          ? res.reason.message
+          : String(res.reason);
+      console.error(
+        `[index-history-runner] repin_failed ` +
+          `hour=${hourStartIso} ` +
+          `peptide=${row.peptide_code} ` +
+          `id=${row.id} ` +
+          `reason=${JSON.stringify(reason)}`,
+      );
     }
     console.log(
-      `[index-history-runner] hour=${hourStart.toISOString()} ` +
+      `[index-history-runner] hour=${hourStartIso} ` +
         `repin: ok=${ok} failed=${failed} total=${repinResults.length}`,
     );
   }
