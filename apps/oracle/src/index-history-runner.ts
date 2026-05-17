@@ -246,7 +246,7 @@ async function runCohortCompletionForHourInner(
   // should never reach this point (the SQL filter at scan sites
   // excludes them), but the cheap guard keeps the on-chain account
   // from ever recording an artifact-driven write.
-  if (indexAccountWriter && hourStart.getUTCMinutes() === 59) {
+  if (indexAccountWriter ) {
     triggerIndexAccountWriteBestEffort(indexAccountWriter, {
       level: result.level,
       hourStartUnix: Math.floor(hourStart.getTime() / 1000),
