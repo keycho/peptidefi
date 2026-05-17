@@ -6,17 +6,17 @@ resolution = true
 skip-lint = false
 
 [programs.localnet]
-biohash_index_program = "6U9YjCbaym1XaaFmPonE2LHn7mnkij99ZJPpSsHaAu9h"
+biohash_index_program = "HD35yuVU8txZwgary7pTYtNGgoAdtznnFLGoK1huTRqa"
 
 [programs.devnet]
-biohash_index_program = "6U9YjCbaym1XaaFmPonE2LHn7mnkij99ZJPpSsHaAu9h"
+biohash_index_program = "HD35yuVU8txZwgary7pTYtNGgoAdtznnFLGoK1huTRqa"
 
 [registry]
 url = "https://api.apr.dev"
 
 [provider]
 cluster = "Localnet"
-wallet = "~/.config/solana/id.json"
+wallet = "/Users/conradlitchfield/peg-deployer-keypair.json"
 
 [scripts]
 test = "pnpm exec ts-mocha -p ./tests/tsconfig.json -t 1000000 tests/**/*.ts"

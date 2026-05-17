@@ -21,7 +21,7 @@
 
 use anchor_lang::prelude::*;
 
-declare_id!("6U9YjCbaym1XaaFmPonE2LHn7mnkij99ZJPpSsHaAu9h");
+declare_id!("HD35yuVU8txZwgary7pTYtNGgoAdtznnFLGoK1huTRqa");
 
 /// PDA seed prefix. Combined with `INDEX_VERSION_SEED` to derive the
 /// singleton index account address.
