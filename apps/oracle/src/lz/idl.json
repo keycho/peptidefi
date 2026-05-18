@@ -1,0 +1,109 @@
+{
+  "address": "11111111111111111111111111111111",
+  "metadata": {
+    "name": "biohash_index_lz_emitter",
+    "version": "0.1.0",
+    "spec": "0.1.0",
+    "description": "BioHash index → Base mirror via LayerZero V2. Strawman IDL (vendored). Address is a placeholder until the program is deployed; the runtime IDL address is overridden by the writer using ORACLE_LZ_EMITTER_PROGRAM_ID."
+  },
+  "instructions": [
+    {
+      "name": "emit_index_update",
+      "docs": [
+        "Pack (level, hour_start_unix, components_hash, slot) into a LayerZero",
+        "payload and CPI into the endpoint's send. The program enforces the",
+        "strict-greater-than monotonic guard on hour_start_unix and the",
+        "has_one = authority check on the OApp store.",
+        "",
+        "max_fee_lamports is the cap the caller is willing to pay for this",
+        "send. If quote(...) returns more than max_fee_lamports the program",
+        "reverts with FeeCapExceeded."
+      ],
+      "discriminator": [144, 28, 195, 88, 134, 51, 121, 9],
+      "accounts": [
+        { "name": "authority", "signer": true, "relations": ["oapp_store"] },
+        {
+          "name": "oapp_store",
+          "writable": true,
+          "pda": {
+            "seeds": [{ "kind": "const", "value": [111, 97, 112, 112, 95, 115, 116, 111, 114, 101] }]
+          }
+        },
+        {
+          "name": "peer",
+          "pda": {
+            "seeds": [
+              { "kind": "const", "value": [80, 101, 101, 114] },
+              { "kind": "account", "path": "oapp_store" },
+              { "kind": "arg", "path": "dst_eid" }
+            ]
+          }
+        },
+        { "name": "endpoint_program" }
+      ],
+      "args": [
+        { "name": "dst_eid", "type": "u32" },
+        { "name": "level", "type": "u64" },
+        { "name": "hour_start_unix", "type": "i64" },
+        { "name": "components_hash", "type": { "array": ["u8", 32] } },
+        { "name": "slot", "type": "u64" },
+        { "name": "max_fee_lamports", "type": "u64" }
+      ]
+    }
+  ],
+  "accounts": [
+    { "name": "OAppStore", "discriminator": [232, 159, 36, 19, 234, 109, 187, 6] },
+    { "name": "Peer", "discriminator": [9, 220, 220, 219, 89, 233, 116, 152] }
+  ],
+  "events": [
+    { "name": "IndexUpdateEmitted", "discriminator": [101, 79, 32, 119, 200, 11, 36, 191] }
+  ],
+  "errors": [
+    { "code": 6000, "name": "NonMonotonicHour", "msg": "hour_start_unix must be strictly greater than the stored value" },
+    { "code": 6001, "name": "FeeCapExceeded", "msg": "Quoted LayerZero fee exceeds max_fee_lamports" },
+    { "code": 6002, "name": "PeerNotConfigured", "msg": "No peer configured for the requested destination EID" },
+    { "code": 6003, "name": "MessageTooLarge", "msg": "Packed payload exceeds the configured maximum size" }
+  ],
+  "types": [
+    {
+      "name": "OAppStore",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          { "name": "authority", "type": "pubkey" },
+          { "name": "endpoint_program", "type": "pubkey" },
+          { "name": "last_emitted_hour", "type": "i64" },
+          { "name": "emit_count", "type": "u64" },
+          { "name": "bump", "type": "u8" },
+          { "name": "_reserved", "type": { "array": ["u8", 64] } }
+        ]
+      }
+    },
+    {
+      "name": "Peer",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          { "name": "dst_eid", "type": "u32" },
+          { "name": "peer_address", "type": { "array": ["u8", 32] } },
+          { "name": "bump", "type": "u8" },
+          { "name": "_reserved", "type": { "array": ["u8", 32] } }
+        ]
+      }
+    },
+    {
+      "name": "IndexUpdateEmitted",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          { "name": "dst_eid", "type": "u32" },
+          { "name": "level", "type": "u64" },
+          { "name": "hour_start_unix", "type": "i64" },
+          { "name": "components_hash", "type": { "array": ["u8", 32] } },
+          { "name": "slot", "type": "u64" },
+          { "name": "fee_lamports", "type": "u64" }
+        ]
+      }
+    }
+  ]
+}

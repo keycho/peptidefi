@@ -1,0 +1,29 @@
+[profile.default]
+src = "contracts"
+out = "out"
+libs = ["lib"]
+test = "test"
+script = "script"
+solc_version = "0.8.20"
+optimizer = true
+optimizer_runs = 200
+remappings = [
+    "@layerzerolabs/oapp-evm/=lib/oapp-evm/",
+    "@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/",
+    "forge-std/=lib/forge-std/src/",
+]
+
+# LayerZero V2 OApp EVM dependencies. Install with:
+#   forge install LayerZero-Labs/oapp-evm
+#   forge install OpenZeppelin/openzeppelin-contracts@v5.0.2
+#   forge install foundry-rs/forge-std
+# Pin exact versions before mainnet deploy. The LayerZero V2 OApp
+# implementation has evolved; verify against
+# https://github.com/LayerZero-Labs/devtools/tree/main/packages/oapp-evm
+# before deploying to mainnet.
+
+[etherscan]
+base = { key = "${BASESCAN_API_KEY}" }
+
+[rpc_endpoints]
+base = "${BASE_RPC_URL}"

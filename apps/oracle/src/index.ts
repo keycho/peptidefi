@@ -18,6 +18,7 @@ import {
 } from "./index-computer";
 import { runStartupRecovery } from "./index-history-runner";
 import { IndexAccountWriter } from "./solana/index-account-writer";
+import { IndexLzEmitter } from "./lz/index-lz-emitter";
 import { OracleSolanaClient } from "./solana/client";
 import { loadOracleKeypair } from "./solana/keypair";
 import { PegPusher } from "./peg/peg-pusher";
@@ -283,6 +284,48 @@ async function main(): Promise<void> {
     console.log("[startup] index account writer disabled (ORACLE_INDEX_PROGRAM_ID unset)");
   }
 
+  // Construct the LayerZero emitter for the Base mirror. Same gating
+  // pattern as the on-chain index account writer: null disables the
+  // subsystem entirely; the oracle continues to write Solana index PDA
+  // and DB + IPFS unchanged. The emitter reuses the same Connection +
+  // keypair as the index writer; it wraps them in its own AnchorProvider.
+  let lzEmitter: IndexLzEmitter | null = null;
+  if (
+    config.lzEmitter.programId &&
+    config.lzEmitter.endpointProgramId &&
+    config.lzEmitter.dstEid
+  ) {
+    try {
+      const lzConn = new Connection(config.rpcUrl, {
+        commitment: "confirmed",
+        confirmTransactionInitialTimeout: config.confirmation.timeoutMs,
+      });
+      lzEmitter = new IndexLzEmitter(lzConn, payer, {
+        programId: new PublicKey(config.lzEmitter.programId),
+        endpointProgramId: new PublicKey(config.lzEmitter.endpointProgramId),
+        dstEid: config.lzEmitter.dstEid,
+        maxFeeLamports: BigInt(config.lzEmitter.maxFeeLamports),
+      });
+      console.log(
+        `[startup] lz emitter enabled ` +
+          `program=${config.lzEmitter.programId} ` +
+          `dst_eid=${config.lzEmitter.dstEid} ` +
+          `oapp=${lzEmitter.oappStore.toBase58()} ` +
+          `peer=${lzEmitter.peer.toBase58()} ` +
+          `max_fee_lamports=${config.lzEmitter.maxFeeLamports}`,
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(
+        `[startup] ORACLE_LZ_EMITTER_PROGRAM_ID set but emitter construction ` +
+          `failed (non-fatal, lz emit disabled): ${msg}`,
+      );
+      lzEmitter = null;
+    }
+  } else {
+    console.log("[startup] lz emitter disabled (ORACLE_LZ_EMITTER_PROGRAM_ID unset)");
+  }
+
   // Startup recovery runs to completion BEFORE the pollers begin
   // ticking. Closes two gap classes deterministically: Case D (oracle
   // killed mid-INSERT into index_history) and Case C (oracle killed
@@ -293,7 +336,7 @@ async function main(): Promise<void> {
   // constructed so backlogged hours also push to the index account.
   if (baselinesLoaded && indexComputer) {
     try {
-      await runStartupRecovery(sql, indexComputer, health.index, indexAccountWriter);
+      await runStartupRecovery(sql, indexComputer, health.index, indexAccountWriter, lzEmitter);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error(
@@ -351,6 +394,7 @@ async function main(): Promise<void> {
         pegPusher,
         indexComputer,
         indexAccountWriter,
+        lzEmitter,
       }),
     ]);
     console.log("[shutdown] all pollers exited");

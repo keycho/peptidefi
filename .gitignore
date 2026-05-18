@@ -66,3 +66,13 @@ test-ledger/
 # contain the $bBPC157 mint keypair + signed-transaction journal).
 scripts/peg-mainnet-init-output.json
 scripts/bbpc157-mint-keypair.json
+
+# foundry build artifacts + installed deps (programs/base)
+programs/base/out/
+programs/base/cache/
+programs/base/lib/
+programs/base/broadcast/
+
+# biohash_index_lz_emitter deploy script output (deployment journal,
+# operator-machine-only)
+programs/biohash_index_lz_emitter/scripts/init-output.json

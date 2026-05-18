@@ -59,6 +59,10 @@ import {
   triggerIndexAccountWriteBestEffort,
   type IndexAccountWriter,
 } from './solana/index-account-writer';
+import {
+  triggerLzEmitBestEffort,
+  type IndexLzEmitter,
+} from './lz/index-lz-emitter';
 
 /**
  * Optional health-state surface for the cohort-completion runner.
@@ -98,6 +102,7 @@ export async function runCohortCompletionForHour(
   hourStart: Date,
   healthSink?: IndexHealthSink | null,
   indexAccountWriter?: IndexAccountWriter | null,
+  lzEmitter?: IndexLzEmitter | null,
 ): Promise<void> {
   try {
     await runCohortCompletionForHourInner(
@@ -106,6 +111,7 @@ export async function runCohortCompletionForHour(
       hourStart,
       healthSink ?? null,
       indexAccountWriter ?? null,
+      lzEmitter ?? null,
     );
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -121,6 +127,7 @@ async function runCohortCompletionForHourInner(
   hourStart: Date,
   healthSink: IndexHealthSink | null,
   indexAccountWriter: IndexAccountWriter | null,
+  lzEmitter: IndexLzEmitter | null,
 ): Promise<void> {
   // Cohort completion check. Compares the count of finalized cohort
   // rows for the hour against the cohort size. Source of truth for
@@ -246,11 +253,33 @@ async function runCohortCompletionForHourInner(
   // should never reach this point (the SQL filter at scan sites
   // excludes them), but the cheap guard keeps the on-chain account
   // from ever recording an artifact-driven write.
-  if (indexAccountWriter ) {
+  const hourStartUnix = Math.floor(hourStart.getTime() / 1000);
+  if (indexAccountWriter) {
     triggerIndexAccountWriteBestEffort(indexAccountWriter, {
       level: result.level,
-      hourStartUnix: Math.floor(hourStart.getTime() / 1000),
+      hourStartUnix,
       componentsHash: result.components_hash,
+      hourStartIso,
+    });
+  }
+
+  // LayerZero V2 emit to the configured Base mirror. Parallel to the
+  // on-chain Solana PDA write above: both are fire-and-forget, both
+  // are independent, neither can block the other or anything else.
+  // The slot field on the LZ payload is the slot at which the Solana
+  // index PDA was last updated; the writer above runs first but
+  // resolves asynchronously, so the slot we pass here is the runner's
+  // best-knowledge value at this point; clock.slot from the on-chain
+  // write itself is not yet available. Base consumers should treat
+  // `slot` as informational; the canonical Solana attestation is the
+  // on-chain index PDA, queryable directly by slot via getSignaturesFor
+  // Address(authority).
+  if (lzEmitter) {
+    triggerLzEmitBestEffort(lzEmitter, {
+      level: result.level,
+      hourStartUnix,
+      componentsHash: result.components_hash,
+      slot: 0, // see comment above; the emitter program also embeds Clock.slot from its own context
       hourStartIso,
     });
   }
@@ -419,6 +448,7 @@ export async function runStartupRecovery(
   computer: IndexComputer,
   healthSink?: IndexHealthSink | null,
   indexAccountWriter?: IndexAccountWriter | null,
+  lzEmitter?: IndexLzEmitter | null,
 ): Promise<void> {
   console.log('[startup-recovery] scanning for incomplete index hours');
 
@@ -454,6 +484,7 @@ export async function runStartupRecovery(
         r.hour_start,
         healthSink,
         indexAccountWriter,
+        lzEmitter,
       );
     }
   }

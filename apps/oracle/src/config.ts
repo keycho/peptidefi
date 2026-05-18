@@ -124,6 +124,31 @@ const envSchema = z.object({
   // and mainnet have separate program IDs; the value is gated like
   // PEG_PROGRAM_ID.
   ORACLE_INDEX_PROGRAM_ID: z.string().optional(),
+
+  // ─── BioHash index → Base mirror via LayerZero V2 ─────────────
+  // Optional. When ORACLE_LZ_EMITTER_PROGRAM_ID is set the oracle
+  // additionally relays each cohort-completed index level to the
+  // configured destination chain (Base mainnet for v1) via a
+  // LayerZero V2 OApp. The relay is parallel to the existing on-
+  // chain index PDA write; either can succeed or fail independently.
+  // When unset the LZ emit subsystem is disabled and the oracle
+  // behaves exactly as before.
+  ORACLE_LZ_EMITTER_PROGRAM_ID: z.string().optional(),
+  // LayerZero endpoint program on Solana. Must match the endpoint
+  // the OApp was deployed against. Required when ORACLE_LZ_EMITTER_
+  // PROGRAM_ID is set.
+  ORACLE_LZ_ENDPOINT_PROGRAM_ID: z.string().optional(),
+  // LayerZero destination endpoint ID. Base mainnet is 30184.
+  // Required when ORACLE_LZ_EMITTER_PROGRAM_ID is set.
+  ORACLE_LZ_BASE_ENDPOINT_ID: z.coerce.number().int().positive().optional(),
+  // Base mirror contract address, hex with optional 0x prefix.
+  // Stored on the emitter program's Peer PDA, set via init_peer
+  // before the first emit can succeed. Surfaced here for diagnostics
+  // only; the writer reads the peer PDA at runtime.
+  ORACLE_LZ_BASE_PEER_ADDRESS: z.string().optional(),
+  // Per-message fee cap in lamports. Default 10_000_000 (0.01 SOL).
+  // The on-chain program enforces this cap as well.
+  ORACLE_LZ_MAX_FEE_LAMPORTS: z.coerce.number().int().positive().optional(),
 });
 
 // ─── Public types ──────────────────────────────────────────────────────
@@ -195,6 +220,20 @@ export interface OracleConfig {
    */
   indexAccount: {
     programId: string | null;
+  };
+
+  /**
+   * LayerZero V2 emitter for the Base mirror. `programId=null`
+   * disables the subsystem; the oracle continues to write the Solana
+   * index PDA unchanged. When enabled, all four required fields must
+   * be set together; partial config is a startup error.
+   */
+  lzEmitter: {
+    programId: string | null;
+    endpointProgramId: string | null;
+    dstEid: number | null;
+    peerAddress: string | null;
+    maxFeeLamports: number;
   };
 
   nodeEnv: string;
@@ -313,7 +352,49 @@ export function loadConfig(): OracleConfig {
       programId: env.ORACLE_INDEX_PROGRAM_ID?.trim() || null,
     },
 
+    lzEmitter: parseLzEmitterConfig(env),
+
     nodeEnv: env.NODE_ENV ?? "development",
+  };
+}
+
+function parseLzEmitterConfig(
+  env: z.infer<typeof envSchema>,
+): OracleConfig["lzEmitter"] {
+  const programId = env.ORACLE_LZ_EMITTER_PROGRAM_ID?.trim() || null;
+  const endpointProgramId = env.ORACLE_LZ_ENDPOINT_PROGRAM_ID?.trim() || null;
+  const dstEid = env.ORACLE_LZ_BASE_ENDPOINT_ID ?? null;
+  const peerAddress = env.ORACLE_LZ_BASE_PEER_ADDRESS?.trim() || null;
+  const maxFeeLamports = env.ORACLE_LZ_MAX_FEE_LAMPORTS ?? 10_000_000;
+
+  if (programId === null) {
+    return {
+      programId: null,
+      endpointProgramId,
+      dstEid,
+      peerAddress,
+      maxFeeLamports,
+    };
+  }
+  // Enabled: every required field must be set. This mirrors the
+  // PEG_PUSHER_ENABLED + PEG_PROGRAM_ID gating; partial config is
+  // a startup error.
+  const missing: string[] = [];
+  if (endpointProgramId === null) missing.push("ORACLE_LZ_ENDPOINT_PROGRAM_ID");
+  if (dstEid === null) missing.push("ORACLE_LZ_BASE_ENDPOINT_ID");
+  if (missing.length > 0) {
+    throw new Error(
+      `ORACLE_LZ_EMITTER_PROGRAM_ID is set but required companion vars ` +
+        `are missing: ${missing.join(", ")}. Set them together or unset ` +
+        `the emitter program to disable the subsystem.`,
+    );
+  }
+  return {
+    programId,
+    endpointProgramId,
+    dstEid,
+    peerAddress,
+    maxFeeLamports,
   };
 }
 
@@ -331,7 +412,7 @@ function parsePegPusherConfig(
     };
   }
 
-  // Enabled — require the program id explicitly. Refuse to start
+  // Enabled requires the program id explicitly. Refuse to start
   // misconfigured: a pusher that's "on" but doesn't know which
   // program to call would silently no-op every push.
   const programId = env.PEG_PROGRAM_ID?.trim();

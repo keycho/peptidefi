@@ -1,0 +1,30 @@
+[package]
+name = "biohash-index-lz-emitter"
+version = "0.1.0"
+description = "BioHash index → Base mirror via LayerZero V2 - Solana OApp emitter. Strawman, pending LayerZero SDK validation."
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "biohash_index_lz_emitter"
+
+[features]
+no-entrypoint = []
+no-idl = []
+no-log-ix-name = []
+cpi = ["no-entrypoint"]
+default = []
+idl-build = ["anchor-lang/idl-build"]
+
+[dependencies]
+anchor-lang = "0.31.1"
+
+# LayerZero V2 Solana OApp dependency. The canonical crate name and
+# version at the time of writing is the @layerzerolabs/lz-solana-sdk-v2
+# family; in Rust this typically appears as a git-pinned dep against
+# https://github.com/LayerZero-Labs/LayerZero-v2. Until the SDK choice
+# is locked, the CPI call site below is marked TODO with the exact
+# import path. Verify against
+# https://docs.layerzero.network/v2/developers/solana before building.
+#
+# oapp = { git = "https://github.com/LayerZero-Labs/LayerZero-v2", branch = "main", package = "oapp" }

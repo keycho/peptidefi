@@ -29,6 +29,7 @@ import { buildCycleManifest } from '../ipfs/manifest-builder';
 import type { IndexComputer } from '../index-computer';
 import { runCohortCompletionForHour } from '../index-history-runner';
 import type { IndexAccountWriter } from '../solana/index-account-writer';
+import type { IndexLzEmitter } from '../lz/index-lz-emitter';
 
 /**
  * TWAP commit poller — Phase D scope (§3.3).
@@ -102,6 +103,15 @@ export interface TwapPollerOptions {
    * DB + IPFS unchanged in that case.
    */
   indexAccountWriter?: IndexAccountWriter | null;
+  /**
+   * Optional LayerZero emitter for the Base mirror. When provided,
+   * every successful index_history INSERT also fires a detached
+   * emit_index_update call. Null when ORACLE_LZ_EMITTER_PROGRAM_ID is
+   * unset; the Solana index PDA write still runs unchanged in that
+   * case. Failures here never block the Solana PDA write or the rest
+   * of the pipeline.
+   */
+  lzEmitter?: IndexLzEmitter | null;
 }
 
 export async function runTwapPoller(opts: TwapPollerOptions): Promise<void> {
@@ -739,6 +749,7 @@ function triggerCohortCompletionBestEffort(
         hourStart,
         opts.health.index,
         opts.indexAccountWriter ?? null,
+        opts.lzEmitter ?? null,
       );
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
