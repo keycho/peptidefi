@@ -83,6 +83,14 @@ in line. They are not committed dates.
   failures but does not retry. Adding exponential backoff and a
   per-peptide retry budget is the companion change to the BigInt
   fix above.
+- **Index mirror on Base via LayerZero V2.** A Solana OApp emitter
+  program plus a Base receiver contract relay each cohort-complete
+  index update to Base. The Solana side remains the canonical record;
+  the Base mirror is a convenience for EVM developers. Trust model
+  on Base is "trust the configured DVN set"; verification is
+  "compare to the Solana PDA". v1 ships with LayerZero Labs DVN. See
+  [Section 10](./10-base-mirror.md). Strawman code on
+  `feat/base-mirror-via-lz`; on-chain deployment pending.
 
 ## Longer-term (aspirational)
 

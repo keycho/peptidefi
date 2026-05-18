@@ -22,6 +22,7 @@ mainnet since the mainnet cutover earlier in May.
 | [07 Verifying BioHash Independently](./07-verifying-independently.md) | How to confirm a level or a TWAP without trusting the API |
 | [08 For Integrators](./08-for-integrators.md) | Reading the index from your own Solana program, CPI examples, composability |
 | [09 Roadmap](./09-roadmap.md) | What is shipped, what is near-term, what is longer-term |
+| [10 The Base mirror via LayerZero V2](./10-base-mirror.md) | EVM-side mirror of the index, status rolling out |
 | [Glossary](./glossary.md) | TWAP, cohort, PDA, components hash, peg, manifest, schema 1.1 |
 
 ## Canonical identifiers
