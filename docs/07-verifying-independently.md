@@ -153,6 +153,17 @@ observation that fed the TWAP, including the dropped rows (currently
 empty under `filtered_median_v1`). With the manifest in hand, you can
 recompute the TWAP from raw vendor prices.
 
+**Caveat as of writing**: a BigInt serialization bug in the oracle's
+cohort-completion repin path is currently preventing the schema-1.1
+final-pin step from running. The first-pin manifests are pinned
+successfully and carry the per-peptide TWAP and Solana anchor; the
+`index_snapshot` block on these manifests is null. To recompute the
+components hash today, fetch the cohort's per-peptide TWAPs and
+baselines from `/v1/index/components` rather than from the manifests'
+`index_snapshot` block. Per-peptide TWAP verification (the TWAP value
+matches its observation set) works against the first-pin manifests
+as written. The fix is tracked in Section 9.
+
 ```bash
 # 1. Find the CID for the latest BPC-157 TWAP.
 CID=$(curl -s "https://api.biohash.network/v1/peptides/BPC157" \

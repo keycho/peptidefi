@@ -84,20 +84,29 @@ because the same oracle authority writes both the TWAP and the index.
 
 BioHash v1 is live on Solana mainnet.
 
-- Per-peptide hourly TWAPs have been committing to mainnet since the
-  oracle's mainnet cutover earlier in May 2026. The cluster cutover
-  is documented in `docs/runbooks/oracle-mainnet-cutover.md`. The
-  oracle authority is
-  `FmBggsBjzGsHrtMayYG8ix2JzoYhVczrwJaGGKPpNKK7`. Commits older than
+- Per-peptide hourly TWAPs have been committing to mainnet for
+  approximately two weeks, since the oracle's mainnet cutover in
+  early May 2026. The cluster cutover is documented in
+  `docs/runbooks/oracle-mainnet-cutover.md`. The oracle authority is
+  `FmBggsBjzGsHrtMayYG8ix2JzoYhVczrwJaGGKPpNKK7`. More than 2000
+  hourly cycle commits have landed since launch. Commits older than
   the cutover live in the same database but carry `cluster='devnet'`.
 - The aggregate index program was deployed and initialised on
   2026-05-17 at `HD35yuVU8txZwgary7pTYtNGgoAdtznnFLGoK1huTRqa`. The
-  singleton PDA at `8SZwocjHyuYvK8TvF1Rbjt6Cj2YWMZcU74deumXvGguh`
-  receives an `update_index` call once per cohort-complete UTC hour.
+  first index write to the singleton PDA at
+  `8SZwocjHyuYvK8TvF1Rbjt6Cj2YWMZcU74deumXvGguh` landed the same day
+  (cycle 2034 was the first hour written on chain). Subsequent
+  cohort-complete UTC hours receive an `update_index` call.
 - The peg program is deployed at
   `2cKMtgXPQt1zT8aWzBAh9LkH3Cf11ris6NDBjrq9J8s7`. The peg state for
-  BPC-157 is initialized. The mint, burn, and reserve flows are in
-  active design. Section 4 covers the deployed surface only.
+  BPC-157 is initialized at
+  `3iBdy1xHpvUdcRwXDVboFLXEbhJLEk83DN1GNE4jPLrv`, with the
+  $bBPC157 SPL mint at
+  `2NK6tdGZ7C6m9GQN6LP8yU8TQGPELeQ8qYsyTAhPAKmp`. The mint's
+  authority is the peg state PDA, so mint and burn flow through the
+  program. Section 4 is the placeholder for the deployed peg surface
+  and will be expanded in v1.1 once the full instruction set is
+  documented.
 - The public REST API runs at `https://api.biohash.network` with a
   Railway origin at
   `https://peptidefi-production-c6d9.up.railway.app`. The /v1 namespace

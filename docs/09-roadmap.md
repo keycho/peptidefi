@@ -7,14 +7,16 @@ dates are not given for unshipped work.
 ## Shipped
 
 - **Per-peptide hourly TWAPs on Solana mainnet.** Live since the
-  mainnet cutover earlier in May 2026. 32 peptides currently active
-  for TWAP commits. The mainnet authority is
-  `FmBggsBjzGsHrtMayYG8ix2JzoYhVczrwJaGGKPpNKK7`. Cutover documented
-  in `docs/runbooks/oracle-mainnet-cutover.md`.
+  mainnet cutover in early May 2026, roughly two weeks before the
+  index launch. 32 peptides currently active for TWAP commits. More
+  than 2000 hourly commits have landed since launch. The mainnet
+  authority is `FmBggsBjzGsHrtMayYG8ix2JzoYhVczrwJaGGKPpNKK7`. Cutover
+  documented in `docs/runbooks/oracle-mainnet-cutover.md`.
 - **Aggregate BioHash Peptide Index on Solana mainnet.** Index
   program deployed at
-  `HD35yuVU8txZwgary7pTYtNGgoAdtznnFLGoK1huTRqa` on 2026-05-17.
-  Singleton PDA at
+  `HD35yuVU8txZwgary7pTYtNGgoAdtznnFLGoK1huTRqa` on 2026-05-17, with
+  the first on-chain `update_index` landing the same day (cycle
+  2034). Singleton PDA at
   `8SZwocjHyuYvK8TvF1Rbjt6Cj2YWMZcU74deumXvGguh`. 29-peptide cohort,
   baseline level 1000 on 2026-05-03, equal weight per peptide.
 - **Schema 1.1 IPFS manifests.** Every cohort manifest carries an
@@ -71,10 +73,16 @@ in line. They are not committed dates.
   beyond per-IP rate limits. Tiered access for higher limits and
   additional endpoints is on the roadmap; the shape (rate limit
   ceiling, what additional endpoints, what price) is undecided.
+- **BigInt repin fix.** A BigInt serialization error in the cohort-
+  completion repin path is currently causing all 29 manifest re-pins
+  per cohort hour to fail. On-chain commits and IPFS first-pins are
+  unaffected; the bug only blocks the final-pin step that adds the
+  `index_snapshot` block to manifests. Fix queued.
 - **IPFS repin loop hardening.** The cohort-completion repin loop in
   `apps/oracle/src/index-history-runner.ts:303-338` logs per-row
   failures but does not retry. Adding exponential backoff and a
-  per-peptide retry budget is a known fix.
+  per-peptide retry budget is the companion change to the BigInt
+  fix above.
 
 ## Longer-term (aspirational)
 

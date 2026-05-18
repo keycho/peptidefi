@@ -31,13 +31,17 @@ Any document, library, or surface that disagrees with these is wrong.
 
 | Field | Value |
 | ----- | ----- |
+| Cluster | `mainnet-beta` |
 | Index program | `HD35yuVU8txZwgary7pTYtNGgoAdtznnFLGoK1huTRqa` |
 | Index PDA (singleton, seeds `["peptide_index", "v1"]`) | `8SZwocjHyuYvK8TvF1Rbjt6Cj2YWMZcU74deumXvGguh` |
 | Peg program | `2cKMtgXPQt1zT8aWzBAh9LkH3Cf11ris6NDBjrq9J8s7` |
+| Peg state PDA (BPC-157) | `3iBdy1xHpvUdcRwXDVboFLXEbhJLEk83DN1GNE4jPLrv` |
+| $bBPC157 SPL mint | `2NK6tdGZ7C6m9GQN6LP8yU8TQGPELeQ8qYsyTAhPAKmp` |
+| Reserve state PDA | `4n5sDmtGkHKpQy6NBCXoT2obpwEdqzaVqXA9oYs2eB5q` |
+| Reserve USDC vault | `HYKqsEnmAMCKBjbDQBK15zcgAhh6yvd7sY94mEBULLn1` |
 | Oracle authority pubkey | `FmBggsBjzGsHrtMayYG8ix2JzoYhVczrwJaGGKPpNKK7` |
 | SPL Memo program (v2) | `MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr` |
 | USDC mint | `EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v` |
-| Cluster | `mainnet-beta` |
 | Index cohort size | 29 |
 | Index baseline date | 2026-05-03 |
 | Index baseline level | 1000 |

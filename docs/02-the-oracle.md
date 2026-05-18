@@ -329,14 +329,22 @@ manifest at schema 1.1 once the index is known; if a repin fails, the
 per-peptide error is now surfaced individually as a structured
 `repin_failed` log line carrying the Pinata error body.
 
-Known bug: the repin loop in
-`apps/oracle/src/index-history-runner.ts:303-338` uses
-`Promise.allSettled` over the 29 manifests and logs per-row failures,
-but it has no exponential backoff and no per-peptide retry cap. If
-Pinata is rate-limiting or down, the entire hour's repin attempt is
-lost; the snapshot UPDATE then writes `ipfs_cids = ARRAY[...]` with
-whatever CIDs already exist on the rows (initial pins). Conrad has
-flagged this for fixing.
+Known bug: a BigInt serialization error in the repin path is
+currently causing all 29 manifest re-pins per cohort hour to fail.
+The on-chain TWAP commits and the IPFS first-pins are unaffected;
+only the final-pin step that adds the `index_snapshot` block to
+manifests is blocked. The cohort-completion `index_history` row is
+written and the on-chain `update_index` lands as designed. The first-
+pin manifests carry the per-peptide TWAP and the Solana anchor but
+not the index snapshot, so an auditor today reconstructs the index
+from the API's `/v1/index/components` endpoint plus the first-pin
+manifests, rather than from the schema-1.1 `index_snapshot` block on
+each manifest. The fix is queued; see Section 9.
 
-The Solana commit remains authoritative when this happens. The IPFS
-layer is additive, not blocking.
+The repin loop in
+`apps/oracle/src/index-history-runner.ts:303-338` also has no
+exponential backoff and no per-peptide retry cap, so once the BigInt
+bug is fixed the loop should grow a retry budget at the same time.
+
+The Solana commit remains authoritative when any of this happens.
+The IPFS layer is additive, not blocking.
