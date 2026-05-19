@@ -14,7 +14,8 @@ biohash index                        # current index level
 biohash index --history 7d           # last 7 days, with sparkline
 biohash peptide bpc157               # current TWAP price
 biohash peptide bpc157 --vendors     # per-vendor breakdown
-biohash peptides                     # full market view, all tracked peptides
+biohash peptides                     # full market view, all tracked peptides (animated reveal)
+biohash peptides --instant           # same view without the staggered animation
 biohash verify --cycle 1899          # verify a TWAP cycle on mainnet + IPFS
 biohash account ATfqMUB3...75Y7mko   # inspect any Solana account
 biohash account ATfqMUB3...75Y7mko --cluster devnet

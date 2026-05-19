@@ -40,7 +40,8 @@ program
 program
   .command('peptides')
   .description('show all tracked peptides with current prices and observation status')
-  .action(() => cmdPeptides());
+  .option('--instant', 'render the full table without the staggered reveal animation')
+  .action((opts) => cmdPeptides(opts));
 
 program
   .command('watch')

@@ -365,8 +365,16 @@ export async function cmdVerify(opts) {
 
 // ============================================================================
 // biohash peptides - full market view: every tracked peptide, sorted.
+//
+// Animated reveal by default. Each data row appears with a small delay so
+// the table builds up gradually, matching the cinematic feel used in
+// recorded screencasts. --instant skips every delay (useful in CI or
+// when piping output to another tool).
 // ============================================================================
-export async function cmdPeptides() {
+export async function cmdPeptides(opts = {}) {
+  const instant = Boolean(opts.instant);
+  const pause = (ms) => (instant ? Promise.resolve() : sleep(ms));
+
   header();
   const spinner = ora({
     text: c.dim('fetching market view'),
@@ -391,9 +399,11 @@ export async function cmdPeptides() {
   const total = priced.length + obs.length;
 
   sectionLabel(`market · ${total} peptides tracked`);
+  await pause(300);
   console.log(
     '  ' + c.dim(`${priced.length} priced · ${obs.length} in observation`),
   );
+  await pause(300);
   console.log('');
 
   // PRICED table. Columns are name-padded to align with the OBS table
@@ -412,10 +422,13 @@ export async function cmdPeptides() {
       c.dim(`$${p.range_24h[0].toFixed(2)} – $${p.range_24h[1].toFixed(2)}`),
     ]);
   });
-  console.log(pricedTable.toString().split('\n').map(l => '  ' + l).join('\n'));
+  await streamTable(pricedTable, priced.length, 60, pause);
+
+  await pause(800);
 
   console.log('');
   console.log('  ' + c.muted('OBSERVATION · 7-DAY WINDOW'));
+  await pause(400);
   console.log('');
 
   // OBS_7D table. Price column shows the OBS label instead of a number;
@@ -434,7 +447,9 @@ export async function cmdPeptides() {
       c.dim(`$${p.range_24h[0].toFixed(2)} – $${p.range_24h[1].toFixed(2)}`),
     ]);
   });
-  console.log(obsTable.toString().split('\n').map(l => '  ' + l).join('\n'));
+  await streamTable(obsTable, obs.length, 100, pause);
+
+  await pause(500);
 
   console.log('');
   console.log(
@@ -442,6 +457,46 @@ export async function cmdPeptides() {
   );
   console.log('  ' + c.dim('full market view at ') + c.mint('biohash.network/market'));
   console.log('');
+}
+
+// Stream a cli-table3 table's output line by line. The table's
+// .toString() returns a single string of all rendered lines including
+// the borders and per-row separators. Layout for N data rows:
+//
+//   line 0:        top border
+//   line 1:        header row
+//   line 2:        header separator
+//   line 3 + 2i:   data row i (i in 0..N-1)
+//   line 4 + 2i:   inner separator (only for i < N-1)
+//   last line:     bottom border
+//
+// Header lines print at once, then each data row + its trailing
+// separator print together per tick, and the bottom border prints on
+// a final tick after the last row. `pause` is honored by the caller's
+// instant flag.
+async function streamTable(table, rowCount, perRowMs, pause) {
+  const lines = table.toString().split('\n');
+
+  // Header chunk: top border + header row + header separator.
+  for (let i = 0; i <= 2 && i < lines.length; i++) {
+    console.log('  ' + lines[i]);
+  }
+
+  // Data rows. Each tick prints one data row plus the separator below
+  // it; the last row skips the separator (next line is the bottom
+  // border, handled after the loop).
+  for (let row = 0; row < rowCount; row++) {
+    await pause(perRowMs);
+    const dataIdx = 3 + row * 2;
+    if (dataIdx < lines.length) console.log('  ' + lines[dataIdx]);
+    if (row < rowCount - 1 && dataIdx + 1 < lines.length) {
+      console.log('  ' + lines[dataIdx + 1]);
+    }
+  }
+
+  // Bottom border on a final tick so the table "closes" visibly.
+  await pause(perRowMs);
+  if (lines.length > 0) console.log('  ' + lines[lines.length - 1]);
 }
 
 // ============================================================================

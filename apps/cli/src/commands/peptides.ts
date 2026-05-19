@@ -8,6 +8,8 @@
 // the same shape as peptide.ts / verify.ts.
 import { cmdPeptides } from "../commands.js";
 
-export async function peptidesCommand(): Promise<void> {
-  await cmdPeptides();
+export async function peptidesCommand(
+  opts: { instant?: boolean } = {},
+): Promise<void> {
+  await cmdPeptides(opts);
 }

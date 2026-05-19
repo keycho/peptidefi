@@ -34,6 +34,7 @@ program
 program
   .command("peptides")
   .description("show all tracked peptides with current prices and observation status")
+  .option("--instant", "render the full table without the staggered reveal animation")
   .action(peptidesCommand);
 
 // `biohash verify --cycle <n>`
