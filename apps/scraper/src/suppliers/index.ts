@@ -81,6 +81,13 @@ export const SUPPLIERS: Partial<Record<string, SupplierModule>> = {
   // pending the operator's quality-review window.
   EZPEP:      createWooModule({ supplierCode: "EZPEP",      host: "ezpeptides.com" }),
   OPTIPEP:    createWooModule({ supplierCode: "OPTIPEP",    host: "optimalpep.com" }),
+  // Added in migration 0047 (vendor panel expansion batch 1). Vanilla
+  // WC, reachable from datacenter IPs without Cloudflare, no account-
+  // required gate observed during recon. enabled_in_twap=false pending
+  // 7-day quality review. Two other batch-1 targets (Mile High
+  // Compounds, Felix Chem) were deferred for account-gated UX matching
+  // the ruo.bio criterion; see docs/follow-ups/vendor-expansion.md.
+  PRIME:      createWooModule({ supplierCode: "PRIME",      host: "primepeptides.co" }),
 };
 
 const stubModule: SupplierModule = {
