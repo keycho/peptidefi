@@ -215,10 +215,56 @@ Errors: `404 NOT_FOUND` for unknown id/code.
 #### `GET /v1/peptides/:code/vendor-prices`
 
 Per-vendor latest prices for a peptide. Used by Lovable's price
-comparison view.
+comparison view and the search-engine surface on biohash.network.
 
 - **Rate limit**: 60/min/IP
-- **Cache**: `public, max-age=60`
+- **Cache**: `public, max-age=30, s-maxage=30`
+- **Path param**: `:code` (peptide code, normalised to upper-case;
+  validated `^[A-Z0-9]{2,16}$`).
+- **Query**: `?cluster=` (optional, applies only to the `twap`
+  block; accepts `mainnet | mainnet-beta | devnet | testnet`).
+
+Response shape (200):
+
+```json
+{
+  "peptide_code": "BPC157",
+  "twap": {
+    "value_usd_per_mg": "6.699000",
+    "computed_at": "2026-05-17T20:00:00+00:00",
+    "cluster": "mainnet-beta"
+  },
+  "vendors": [
+    {
+      "vendor_name": "Pure Health Peptides",
+      "vendor_homepage": "https://purehealthpeptides.com",
+      "product_url": "https://purehealthpeptides.com/product/bpc-157/",
+      "price_usd_per_mg": "3.633333",
+      "observed_at": "2026-05-20T10:03:59.206+00:00"
+    }
+  ],
+  "spread": {
+    "min": "3.633333",
+    "max": "11.000000",
+    "variance_pct": 202.7
+  }
+}
+```
+
+Notes:
+
+- `vendor_homepage` is `suppliers.homepage_url`; `product_url` is
+  `supplier_products.product_url`. Both are guaranteed non-empty on
+  every returned row; vendors whose schema rows are missing either
+  URL are filtered out server-side.
+- `vendors` is sorted by `price_usd_per_mg` ascending so the cheapest
+  vendor sits at the top of the list (good for the spread visual on
+  the frontend).
+- `twap` is `null` when no finalized TWAP commit exists for the
+  peptide on the requested cluster.
+- `spread` is `null` when `vendors` is empty.
+- 404 when the peptide code doesn't exist; 400 when the code fails
+  the regex validation.
 
 #### `GET /v1/peptides/:code/price-history`
 

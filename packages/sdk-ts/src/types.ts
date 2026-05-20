@@ -115,6 +115,18 @@ export interface PeptideDetailResponse {
 
 export interface VendorPriceRow {
   vendor_name: string;
+  /**
+   * Vendor's main website (suppliers.homepage_url). Always present.
+   * Vendors without a homepage URL are filtered out of the response
+   * by the server.
+   */
+  vendor_homepage: string;
+  /**
+   * The specific product page on the vendor's site for this peptide
+   * (supplier_products.product_url). Always present. Vendors without
+   * a product URL are filtered out of the response by the server.
+   */
+  product_url: string;
   price_usd_per_mg: string;
   observed_at: string;
 }

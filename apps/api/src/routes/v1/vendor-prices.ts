@@ -52,7 +52,17 @@ interface ObservationRow {
   // 1-to-1 case via FK) or an array (for the 1-to-many case). The
   // suppliers FK is many-to-1 from observations, so it comes back as
   // a single object. We accept both shapes defensively.
-  suppliers: { display_name: string } | { display_name: string }[] | null;
+  suppliers:
+    | { display_name: string; homepage_url: string | null }
+    | { display_name: string; homepage_url: string | null }[]
+    | null;
+  // Same embed shape for supplier_products. Each observation row
+  // points at exactly one supplier_product via supplier_product_id;
+  // PostgREST returns it as a single object.
+  supplier_products:
+    | { product_url: string | null }
+    | { product_url: string | null }[]
+    | null;
 }
 
 interface TwapRow {
@@ -63,6 +73,8 @@ interface TwapRow {
 
 interface VendorEntry {
   vendor_name: string;
+  vendor_homepage: string;
+  product_url: string;
   price_usd_per_mg: string;
   observed_at: string;
 }
@@ -119,7 +131,7 @@ export async function getPeptideVendorPricesHandler(
   const { data: obsRows, error: oErr } = await supabase
     .from("supplier_observations")
     .select(
-      "supplier_id, price_usd_per_mg, observed_at, suppliers(display_name)",
+      "supplier_id, price_usd_per_mg, observed_at, suppliers(display_name, homepage_url), supplier_products(product_url)",
     )
     .eq("peptide_id", peptide.id)
     .eq("scrape_success", true)
@@ -155,13 +167,22 @@ export async function getPeptideVendorPricesHandler(
   // ── Reduce: latest observation per supplier ──────────────────────
   // obsRows arrives ordered by observed_at desc. The Map insert-or-
   // skip pattern keeps the first (= newest) row per supplier_id.
+  // Rows missing a product_url are skipped per the contract: the
+  // frontend search engine drives users to the product page directly,
+  // so a row without that URL has nowhere to send them.
   const latestPerSupplier = new Map<string | number, VendorEntry>();
   for (const row of (obsRows ?? []) as ObservationRow[]) {
     if (latestPerSupplier.has(row.supplier_id)) continue;
     const supplierName = extractSupplierName(row.suppliers);
     if (!supplierName) continue;
+    const vendorHomepage = extractSupplierHomepage(row.suppliers);
+    if (!vendorHomepage) continue;
+    const productUrl = extractProductUrl(row.supplier_products);
+    if (!productUrl) continue;
     latestPerSupplier.set(row.supplier_id, {
       vendor_name: supplierName,
+      vendor_homepage: vendorHomepage,
+      product_url: productUrl,
       price_usd_per_mg: String(row.price_usd_per_mg),
       observed_at: row.observed_at,
     });
@@ -201,6 +222,26 @@ function extractSupplierName(
   // PostgREST embedded selects can come back as object or array.
   if (Array.isArray(s)) return s[0]?.display_name ?? null;
   return s.display_name ?? null;
+}
+
+function extractSupplierHomepage(
+  s: ObservationRow["suppliers"],
+): string | null {
+  if (!s) return null;
+  const row = Array.isArray(s) ? s[0] : s;
+  const url = row?.homepage_url;
+  if (typeof url !== "string" || url.trim() === "") return null;
+  return url;
+}
+
+function extractProductUrl(
+  p: ObservationRow["supplier_products"],
+): string | null {
+  if (!p) return null;
+  const row = Array.isArray(p) ? p[0] : p;
+  const url = row?.product_url;
+  if (typeof url !== "string" || url.trim() === "") return null;
+  return url;
 }
 
 function computeSpread(vendors: VendorEntry[]): SpreadBlock | null {
